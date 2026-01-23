@@ -38,10 +38,12 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/agentbox /app/agentbox
 
-# Copy config file
+# Create config directory and copy config file
+# COPY automatically creates directories, but we ensure it exists for clarity
+RUN mkdir -p /app/config && chown agentbox:agentbox /app/config
 COPY --from=builder /build/config/config.yaml /app/config/config.yaml
 
-# Change ownership
+# Change ownership of all files
 RUN chown -R agentbox:agentbox /app
 
 # Switch to non-root user
