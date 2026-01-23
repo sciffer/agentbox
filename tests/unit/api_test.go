@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/api"
@@ -147,7 +148,7 @@ func TestGetEnvironmentAPI(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	var createdEnv models.Environment
-	json.NewDecoder(rr.Body).Decode(&createdEnv)
+	_ = json.NewDecoder(rr.Body).Decode(&createdEnv) // Ignore decode errors in tests
 
 	t.Run("get existing environment", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+createdEnv.ID, nil)
@@ -262,7 +263,7 @@ func TestExecuteCommandAPI(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	var env models.Environment
-	json.NewDecoder(rr.Body).Decode(&env)
+	_ = json.NewDecoder(rr.Body).Decode(&env) // Ignore decode errors in tests
 
 	t.Run("execute valid command", func(t *testing.T) {
 		execReq := models.ExecRequest{
@@ -320,7 +321,7 @@ func TestDeleteEnvironmentAPI(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	var env models.Environment
-	json.NewDecoder(rr.Body).Decode(&env)
+	_ = json.NewDecoder(rr.Body).Decode(&env) // Ignore decode errors in tests
 
 	t.Run("delete existing environment", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/environments/"+env.ID, nil)
@@ -347,7 +348,7 @@ func TestDeleteEnvironmentAPI(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		var env models.Environment
-		json.NewDecoder(rr.Body).Decode(&env)
+		_ = json.NewDecoder(rr.Body).Decode(&env) // Ignore decode errors in tests
 
 		// Force delete
 		req = httptest.NewRequest(http.MethodDelete, "/api/v1/environments/"+env.ID+"?force=true", nil)
@@ -402,16 +403,16 @@ func TestGetLogsAPI(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	var env models.Environment
-	json.NewDecoder(rr.Body).Decode(&env)
+	_ = json.NewDecoder(rr.Body).Decode(&env) // Ignore decode errors in tests
 
 	// Wait for async pod creation
 	time.Sleep(200 * time.Millisecond)
-	
+
 	// Ensure pod exists in mock (create manually if async creation hasn't completed)
 	pod, err := mockK8s.GetPod(ctx, env.Namespace, "main")
 	if err != nil || pod == nil {
 		// Create pod manually if async creation hasn't completed
-		mockK8s.CreatePod(ctx, &k8s.PodSpec{
+		_ = mockK8s.CreatePod(ctx, &k8s.PodSpec{ // Ignore errors in tests
 			Name:      "main",
 			Namespace: env.Namespace,
 			Image:     "python:3.11-slim",
@@ -467,13 +468,15 @@ func TestGetLogsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("get logs with follow parameter (not implemented)", func(t *testing.T) {
+	t.Run("get logs with follow parameter (streaming)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+env.ID+"/logs?follow=true", nil)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
-		// Should return 501 Not Implemented
-		assert.Equal(t, http.StatusNotImplemented, rr.Code)
+		// Should return 200 OK with SSE content type
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "text/event-stream", rr.Header().Get("Content-Type"))
+		assert.Contains(t, rr.Body.String(), "data:")
 	})
 
 	t.Run("get logs for non-existent environment", func(t *testing.T) {

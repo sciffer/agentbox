@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/sciffer/agentbox/internal/config"
 )
 
@@ -14,7 +15,7 @@ func TestLoadConfig(t *testing.T) {
 		// Disable auth for default test since it requires a secret
 		os.Setenv("AGENTBOX_AUTH_ENABLED", "false")
 		defer os.Unsetenv("AGENTBOX_AUTH_ENABLED")
-		
+
 		cfg, err := config.Load("")
 		require.NoError(t, err)
 

@@ -24,5 +24,6 @@ type ClientInterface interface {
 	WaitForPodRunning(ctx context.Context, namespace, name string) error
 	ExecInPod(ctx context.Context, namespace, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error
 	GetPodLogs(ctx context.Context, namespace, podName string, tailLines *int64) (string, error)
+	StreamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64, follow bool) (io.ReadCloser, error)
 	ListPods(ctx context.Context, namespace string, labelSelector string) (*corev1.PodList, error)
 }

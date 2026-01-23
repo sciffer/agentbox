@@ -1,0 +1,18 @@
+apiVersion: v2
+name: agentbox
+description: A Helm chart for AgentBox - Isolated execution environment management platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - kubernetes
+  - execution
+  - isolation
+  - containers
+home: https://github.com/sciffer/agentbox
+sources:
+  - https://github.com/sciffer/agentbox
+maintainers:
+  - name: AgentBox Team
+icon: https://raw.githubusercontent.com/sciffer/agentbox/main/docs/icon.png
+dependencies: []

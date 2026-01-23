@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,20 +20,24 @@ var _ k8s.ClientInterface = (*MockK8sClient)(nil)
 // MockK8sClient is a mock implementation of the Kubernetes client for testing
 // It implements all methods of k8s.Client for testing purposes
 type MockK8sClient struct {
-	namespaces map[string]bool
-	pods       map[string]map[string]*corev1.Pod
-	quotas     map[string]bool
-	policies   map[string]bool
-	mu         sync.RWMutex
+	namespaces       map[string]bool
+	pods             map[string]map[string]*corev1.Pod
+	quotas           map[string]bool
+	policies         map[string]bool
+	podLogs          map[string]map[string]string // namespace -> pod -> logs
+	healthCheckError bool
+	mu               sync.RWMutex
 }
 
 // NewMockK8sClient creates a new mock Kubernetes client
 func NewMockK8sClient() *MockK8sClient {
 	return &MockK8sClient{
-		namespaces: make(map[string]bool),
-		pods:       make(map[string]map[string]*corev1.Pod),
-		quotas:     make(map[string]bool),
-		policies:   make(map[string]bool),
+		namespaces:       make(map[string]bool),
+		pods:             make(map[string]map[string]*corev1.Pod),
+		quotas:           make(map[string]bool),
+		policies:         make(map[string]bool),
+		podLogs:          make(map[string]map[string]string),
+		healthCheckError: false,
 	}
 }
 
@@ -46,8 +51,14 @@ func (m *MockK8sClient) Config() *rest.Config {
 	return nil
 }
 
-// HealthCheck simulates a successful health check
+// HealthCheck simulates a health check
 func (m *MockK8sClient) HealthCheck(ctx context.Context) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.healthCheckError {
+		return fmt.Errorf("health check failed")
+	}
 	return nil
 }
 
@@ -186,7 +197,11 @@ func (m *MockK8sClient) WaitForPodRunning(ctx context.Context, namespace, name s
 }
 
 // ExecInPod simulates command execution in a pod
-func (m *MockK8sClient) ExecInPod(ctx context.Context, namespace, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func (m *MockK8sClient) ExecInPod(ctx context.Context,
+	namespace, podName string,
+	command []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -208,6 +223,14 @@ func (m *MockK8sClient) GetPodLogs(ctx context.Context, namespace, podName strin
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Check if we have custom logs set
+	if logs, ok := m.podLogs[namespace]; ok {
+		if logContent, ok := logs[podName]; ok {
+			return logContent, nil
+		}
+	}
+
+	// Default: check if pod exists
 	if pods, ok := m.pods[namespace]; ok {
 		if _, ok := pods[podName]; ok {
 			return "mock log output\n", nil
@@ -217,8 +240,39 @@ func (m *MockK8sClient) GetPodLogs(ctx context.Context, namespace, podName strin
 	return "", fmt.Errorf("pod not found")
 }
 
+// StreamPodLogs simulates streaming pod logs
+func (m *MockK8sClient) StreamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64, follow bool) (io.ReadCloser, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Check if we have custom logs set
+	var logContent string
+	if logs, ok := m.podLogs[namespace]; ok {
+		if content, ok := logs[podName]; ok {
+			logContent = content
+		}
+	}
+
+	// Default: check if pod exists
+	if logContent == "" {
+		if pods, ok := m.pods[namespace]; ok {
+			if _, ok := pods[podName]; ok {
+				logContent = "mock log output\n"
+			}
+		}
+	}
+
+	if logContent == "" {
+		return nil, fmt.Errorf("pod not found")
+	}
+
+	// Create a mock stream that implements io.ReadCloser
+	// For testing, we'll return the logs as a stream
+	return io.NopCloser(strings.NewReader(logContent)), nil
+}
+
 // ListPods lists mock pods in a namespace
-func (m *MockK8sClient) ListPods(ctx context.Context, namespace string, labelSelector string) (*corev1.PodList, error) {
+func (m *MockK8sClient) ListPods(ctx context.Context, namespace, labelSelector string) (*corev1.PodList, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -279,4 +333,31 @@ func (m *MockK8sClient) Reset() {
 	m.pods = make(map[string]map[string]*corev1.Pod)
 	m.quotas = make(map[string]bool)
 	m.policies = make(map[string]bool)
+	m.podLogs = make(map[string]map[string]string)
+	m.healthCheckError = false
+}
+
+// SetHealthCheckError sets whether health check should fail
+func (m *MockK8sClient) SetHealthCheckError(fail bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.healthCheckError = fail
+}
+
+// SetPodLogs sets custom logs for a pod
+func (m *MockK8sClient) SetPodLogs(namespace, podName, logs string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.podLogs[namespace] == nil {
+		m.podLogs[namespace] = make(map[string]string)
+	}
+	m.podLogs[namespace][podName] = logs
+}
+
+// PodSpec is a helper type for creating pods in tests
+type PodSpec struct {
+	Name      string
+	Namespace string
+	Image     string
 }

@@ -1,0 +1,183 @@
+# Default values for agentbox
+# This is a YAML-formatted file.
+
+# Image configuration
+image:
+  repository: agentbox
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+# Service account configuration
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Replica configuration
+replicaCount: 1
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: agentbox.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: agentbox-tls
+  #    hosts:
+  #      - agentbox.local
+
+# Application configuration
+config:
+  server:
+    port: 8080
+    host: "0.0.0.0"
+    log_level: "info"
+  
+  kubernetes:
+    kubeconfig: ""  # Empty means use in-cluster config
+    namespace_prefix: "agentbox-"
+    runtime_class: "gvisor"
+  
+  auth:
+    enabled: false
+    secret: ""  # Set via secret or environment variable
+  
+  resources:
+    default_cpu_limit: "1000m"
+    default_memory_limit: "1Gi"
+    default_storage_limit: "5Gi"
+    max_environments_per_user: 100
+  
+  timeouts:
+    default_timeout: 3600
+    max_timeout: 86400
+    startup_timeout: 60
+
+# Environment variables (override config)
+env: []
+#  - name: AGENTBOX_LOG_LEVEL
+#    value: "debug"
+#  - name: AGENTBOX_AUTH_ENABLED
+#    value: "true"
+
+# Secrets (for sensitive data like auth secret)
+secrets: {}
+#  authSecret: "your-auth-secret-here"
+
+# Liveness probe
+livenessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Readiness probe
+readinessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Startup probe
+startupProbe:
+  httpGet:
+    path: /api/v1/health
+    port: http
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30
+
+# Autoscaling (optional)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# RBAC configuration
+rbac:
+  create: true
+  # ClusterRole is needed to create namespaces and manage resources
+  clusterRole:
+    create: true
+    rules:
+      - apiGroups: [""]
+        resources: ["namespaces", "pods", "pods/log", "pods/exec", "resourcequotas"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - apiGroups: ["networking.k8s.io"]
+        resources: ["networkpolicies"]
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      - apiGroups: [""]
+        resources: ["nodes"]
+        verbs: ["get", "list", "watch"]
+
+# ServiceMonitor for Prometheus (optional)
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}

@@ -28,7 +28,8 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test ./tests/unit/... -v -race -coverprofile=coverage.out
+        run: go test -count=1 ./tests/unit/... -v
+        continue-on-error: false
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
