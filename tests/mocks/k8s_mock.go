@@ -1,0 +1,273 @@
+package mocks
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"sync"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
+	"github.com/sciffertbox/pkg/k8s"
+)
+
+// MockK8sClient is a mock implementation of the Kubernetes client for testing
+type MockK8sClient struct {
+	*k8s.Client
+	namespaces map[string]bool
+	pods       map[string]map[string]*corev1.Pod
+	quotas     map[string]bool
+	policies   map[string]bool
+	mu         sync.RWMutex
+}
+
+// NewMockK8sClient creates a new mock Kubernetes client
+func NewMockK8sClient() *MockK8sClient {
+	return &MockK8sClient{
+		namespaces: make(map[string]bool),
+		pods:       make(map[string]map[string]*corev1.Pod),
+		quotas:     make(map[string]bool),
+		policies:   make(map[string]bool),
+	}
+}
+
+// Clientset returns nil for mock (not needed for unit tests)
+func (m *MockK8sClient) Clientset() *kubernetes.Clientset {
+	return nil
+}
+
+// Config returns nil for mock
+func (m *MockK8sClient) Config() *rest.Config {
+	return nil
+}
+
+// HealthCheck simulates a successful health check
+func (m *MockK8sClient) HealthCheck(ctx context.Context) error {
+	return nil
+}
+
+// GetServerVersion returns a mock version
+func (m *MockK8sClient) GetServerVersion(ctx context.Context) (string, error) {
+	return "v1.28.0", nil
+}
+
+// CreateNamespace creates a mock namespace
+func (m *MockK8sClient) CreateNamespace(ctx context.Context, name string, labels map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.namespaces[name] {
+		return fmt.Errorf("namespace already exists")
+	}
+
+	m.namespaces[name] = true
+	m.pods[name] = make(map[string]*corev1.Pod)
+	return nil
+}
+
+// DeleteNamespace deletes a mock namespace
+func (m *MockK8sClient) DeleteNamespace(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.namespaces, name)
+	delete(m.pods, name)
+	return nil
+}
+
+// NamespaceExists checks if a namespace exists
+func (m *MockK8sClient) NamespaceExists(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.namespaces[name]
+}
+
+// CreateResourceQuota creates a mock resource quota
+func (m *MockK8sClient) CreateResourceQuota(ctx context.Context, namespace, cpu, memory, storage string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.namespaces[namespace] {
+		return fmt.Errorf("namespace not found")
+	}
+
+	m.quotas[namespace] = true
+	return nil
+}
+
+// CreateNetworkPolicy creates a mock network policy
+func (m *MockK8sClient) CreateNetworkPolicy(ctx context.Context, namespace string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.namespaces[namespace] {
+		return fmt.Errorf("namespace not found")
+	}
+
+	m.policies[namespace] = true
+	return nil
+}
+
+// CreatePod creates a mock pod
+func (m *MockK8sClient) CreatePod(ctx context.Context, spec *k8s.PodSpec) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.namespaces[spec.Namespace] {
+		return fmt.Errorf("namespace not found")
+	}
+
+	pod := &corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+		},
+	}
+
+	if m.pods[spec.Namespace] == nil {
+		m.pods[spec.Namespace] = make(map[string]*corev1.Pod)
+	}
+
+	m.pods[spec.Namespace][spec.Name] = pod
+	return nil
+}
+
+// GetPod retrieves a mock pod
+func (m *MockK8sClient) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if pod, ok := pods[name]; ok {
+			return pod, nil
+		}
+	}
+
+	return nil, fmt.Errorf("pod not found")
+}
+
+// DeletePod deletes a mock pod
+func (m *MockK8sClient) DeletePod(ctx context.Context, namespace, name string, force bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		delete(pods, name)
+		return nil
+	}
+
+	return fmt.Errorf("pod not found")
+}
+
+// WaitForPodRunning simulates waiting for a pod to be running
+func (m *MockK8sClient) WaitForPodRunning(ctx context.Context, namespace, name string) error {
+	// In mock, immediately mark as running
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if pod, ok := pods[name]; ok {
+			pod.Status.Phase = corev1.PodRunning
+			return nil
+		}
+	}
+
+	return fmt.Errorf("pod not found")
+}
+
+// ExecInPod simulates command execution in a pod
+func (m *MockK8sClient) ExecInPod(ctx context.Context, namespace, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if _, ok := pods[podName]; ok {
+			// Simulate successful execution
+			if stdout != nil {
+				stdout.Write([]byte("mock output\n"))
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("pod not found")
+}
+
+// GetPodLogs simulates retrieving pod logs
+func (m *MockK8sClient) GetPodLogs(ctx context.Context, namespace, podName string, tailLines *int64) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if _, ok := pods[podName]; ok {
+			return "mock log output\n", nil
+		}
+	}
+
+	return "", fmt.Errorf("pod not found")
+}
+
+// ListPods lists mock pods in a namespace
+func (m *MockK8sClient) ListPods(ctx context.Context, namespace string, labelSelector string) (*corev1.PodList, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	podList := &corev1.PodList{
+		Items: []corev1.Pod{},
+	}
+
+	if pods, ok := m.pods[namespace]; ok {
+		for _, pod := range pods {
+			podList.Items = append(podList.Items, *pod)
+		}
+	}
+
+	return podList, nil
+}
+
+// SetPodRunning manually sets a pod to running state (for testing)
+func (m *MockK8sClient) SetPodRunning(namespace, name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if pod, ok := pods[name]; ok {
+			pod.Status.Phase = corev1.PodRunning
+		}
+	}
+}
+
+// SetPodFailed manually sets a pod to failed state (for testing)
+func (m *MockK8sClient) SetPodFailed(namespace, name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if pod, ok := pods[name]; ok {
+			pod.Status.Phase = corev1.PodFailed
+		}
+	}
+}
+
+// GetPodCount returns the number of pods in a namespace
+func (m *MockK8sClient) GetPodCount(namespace string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		return len(pods)
+	}
+	return 0
+}
+
+// Reset clears all mock data
+func (m *MockK8sClient) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.namespaces = make(map[string]bool)
+	m.pods = make(map[string]map[string]*corev1.Pod)
+	m.quotas = make(map[string]bool)
+	m.policies = make(map[string]bool)
+}

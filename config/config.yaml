@@ -1,0 +1,24 @@
+server:
+  port: 8080
+  host: "0.0.0.0"
+  log_level: "info"
+
+kubernetes:
+  kubeconfig: ""  # Uses in-cluster config if empty
+  namespace_prefix: "agentbox-"
+  runtime_class: "gvisor"
+
+auth:
+  enabled: false  # Set to true in production
+  secret: ""  # Set via AGENTBOX_AUTH_SECRET env var
+
+resources:
+  default_cpu_limit: "1000m"
+  default_memory_limit: "1Gi"
+  default_storage_limit: "5Gi"
+  max_environments_per_user: 100
+
+timeouts:
+  default_timeout: 3600
+  max_timeout: 86400
+  startup_timeout: 60

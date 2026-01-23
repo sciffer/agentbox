@@ -1,0 +1,47 @@
+# Binaries
+agentbox
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config
+config/config.local.yaml
+*.key
+*.pem
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Kubernetes
+kubeconfig
+
+# Coverage
+coverage.out
+coverage.html
