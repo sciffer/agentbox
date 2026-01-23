@@ -105,7 +105,9 @@ func setDefaults(cfg *Config) {
 // overrideFromEnv overrides config with environment variables
 func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTBOX_PORT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Server.Port)
+		if _, err := fmt.Sscanf(v, "%d", &cfg.Server.Port); err != nil {
+			// Invalid port value, keep default
+		}
 	}
 	if v := os.Getenv("AGENTBOX_HOST"); v != "" {
 		cfg.Server.Host = v
@@ -138,16 +140,24 @@ func overrideFromEnv(cfg *Config) {
 		cfg.Resources.DefaultStorageLimit = v
 	}
 	if v := os.Getenv("AGENTBOX_MAX_ENVIRONMENTS_PER_USER"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Resources.MaxEnvironmentsPerUser)
+		if _, err := fmt.Sscanf(v, "%d", &cfg.Resources.MaxEnvironmentsPerUser); err != nil {
+			// Invalid value, keep default
+		}
 	}
 	if v := os.Getenv("AGENTBOX_DEFAULT_TIMEOUT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Timeouts.DefaultTimeout)
+		if _, err := fmt.Sscanf(v, "%d", &cfg.Timeouts.DefaultTimeout); err != nil {
+			// Invalid value, keep default
+		}
 	}
 	if v := os.Getenv("AGENTBOX_MAX_TIMEOUT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Timeouts.MaxTimeout)
+		if _, err := fmt.Sscanf(v, "%d", &cfg.Timeouts.MaxTimeout); err != nil {
+			// Invalid value, keep default
+		}
 	}
 	if v := os.Getenv("AGENTBOX_STARTUP_TIMEOUT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Timeouts.StartupTimeout)
+		if _, err := fmt.Sscanf(v, "%d", &cfg.Timeouts.StartupTimeout); err != nil {
+			// Invalid value, keep default
+		}
 	}
 }
 

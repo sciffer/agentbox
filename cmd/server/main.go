@@ -40,7 +40,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to create logger: %v\n", err)
 		os.Exit(1)
 	}
-	defer log.Sync()
+	defer func() {
+		_ = log.Sync() // Best effort sync on shutdown
+	}()
 
 	log.Info("starting agentbox server", zap.String("version", "1.0.0"))
 

@@ -45,17 +45,14 @@ func NewUpgrader(allowedOrigins []string) websocket.Upgrader {
 	}
 }
 
-var upgrader = NewUpgrader(nil) // Default: allow all origins (can be overridden)
-
 // Proxy handles WebSocket connections to pod shells
 type Proxy struct {
-	k8sClient    k8s.ClientInterface
-	logger       *logger.Logger
-	sessions     map[string]*Session
-	mu           sync.RWMutex
-	upgrader     websocket.Upgrader
-	maxSessions  int
-	sessionCount int
+	k8sClient   k8s.ClientInterface
+	logger      *logger.Logger
+	sessions    map[string]*Session
+	mu          sync.RWMutex
+	upgrader    websocket.Upgrader
+	maxSessions int
 }
 
 // Session represents an active WebSocket session
@@ -301,12 +298,12 @@ func (s *Session) Close() {
 		s.stderr.Close()
 	}
 
-	// Send close message
+	// Send close message (best effort)
 	closeMsg := models.WebSocketMessage{
 		Type:      "exit",
 		Timestamp: time.Now(),
 	}
-	s.Conn.WriteJSON(closeMsg)
+	_ = s.Conn.WriteJSON(closeMsg) // Ignore error on close
 	s.Conn.Close()
 }
 

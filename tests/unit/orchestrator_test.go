@@ -173,7 +173,7 @@ func TestDeleteEnvironment(t *testing.T) {
 	pod, _ := mockK8s.GetPod(ctx, env.Namespace, "main")
 	if pod == nil {
 		// Create pod if async creation hasn't completed
-		mockK8s.CreatePod(ctx, &k8s.PodSpec{
+		_ = mockK8s.CreatePod(ctx, &k8s.PodSpec{ // Ignore errors in tests
 			Name:      "main",
 			Namespace: env.Namespace,
 			Image:     "python:3.11-slim",
@@ -318,7 +318,7 @@ func TestGetLogs(t *testing.T) {
 	pod, err := mockK8s.GetPod(ctx, env.Namespace, "main")
 	if err != nil || pod == nil {
 		// Create pod manually if async creation hasn't completed
-		mockK8s.CreatePod(ctx, &k8s.PodSpec{
+		_ = mockK8s.CreatePod(ctx, &k8s.PodSpec{ // Ignore errors in tests
 			Name:      "main",
 			Namespace: env.Namespace,
 			Image:     "python:3.11-slim",

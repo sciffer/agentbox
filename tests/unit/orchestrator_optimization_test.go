@@ -125,7 +125,7 @@ func TestExecuteCommandTimeout(t *testing.T) {
 		Memory:    "512Mi",
 		Storage:   "1Gi",
 	}
-	mockK8s.CreatePod(ctx, podSpec)
+	_ = mockK8s.CreatePod(ctx, podSpec) // Ignore errors in tests
 	mockK8s.SetPodRunning(env.Namespace, "main")
 
 	// Test with timeout
@@ -164,7 +164,7 @@ func TestGetLogsEmptyLogs(t *testing.T) {
 		Memory:    "512Mi",
 		Storage:   "1Gi",
 	}
-	mockK8s.CreatePod(ctx, podSpec)
+	_ = mockK8s.CreatePod(ctx, podSpec) // Ignore errors in tests
 	mockK8s.SetPodRunning(env.Namespace, "main")
 
 	// Mock empty logs
@@ -207,7 +207,7 @@ func TestGetLogsWithTail(t *testing.T) {
 		Memory:    "512Mi",
 		Storage:   "1Gi",
 	}
-	mockK8s.CreatePod(ctx, podSpec)
+	_ = mockK8s.CreatePod(ctx, podSpec) // Ignore errors in tests
 	mockK8s.SetPodRunning(env.Namespace, "main")
 
 	// Mock logs
