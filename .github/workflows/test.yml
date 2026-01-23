@@ -6,6 +6,7 @@ on:
       - develop
       - 'feature/**'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches-ignore:
       - main
     # Run on all pull requests EXCEPT those targeting main
