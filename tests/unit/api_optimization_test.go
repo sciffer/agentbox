@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sciffer/agentbox/pkg/models"
 )
 
 func TestCreateEnvironmentLargeBody(t *testing.T) {
@@ -25,7 +25,7 @@ func TestCreateEnvironmentLargeBody(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	// MaxBytesReader returns 400 Bad Request when limit exceeded
-	assert.True(t, rr.Code == http.StatusBadRequest || rr.Code == http.StatusRequestEntityTooLarge, 
+	assert.True(t, rr.Code == http.StatusBadRequest || rr.Code == http.StatusRequestEntityTooLarge,
 		"Expected 400 or 413, got %d", rr.Code)
 }
 
@@ -37,10 +37,10 @@ func TestListEnvironmentsInvalidPagination(t *testing.T) {
 		url    string
 		status int
 	}{
-		{"negative limit", "/api/v1/environments?limit=-1", http.StatusOK}, // Should default to 100
-		{"negative offset", "/api/v1/environments?offset=-1", http.StatusOK}, // Should default to 0
-		{"invalid limit", "/api/v1/environments?limit=abc", http.StatusOK}, // Should default to 100
-		{"invalid offset", "/api/v1/environments?offset=xyz", http.StatusOK}, // Should default to 0
+		{"negative limit", "/api/v1/environments?limit=-1", http.StatusOK},       // Should default to 100
+		{"negative offset", "/api/v1/environments?offset=-1", http.StatusOK},     // Should default to 0
+		{"invalid limit", "/api/v1/environments?limit=abc", http.StatusOK},       // Should default to 100
+		{"invalid offset", "/api/v1/environments?offset=xyz", http.StatusOK},     // Should default to 0
 		{"very large limit", "/api/v1/environments?limit=999999", http.StatusOK}, // Should cap
 	}
 

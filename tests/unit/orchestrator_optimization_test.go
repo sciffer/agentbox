@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 	"github.com/sciffer/agentbox/tests/mocks"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupOrchestratorForOptimization creates an orchestrator for optimization tests
@@ -59,17 +59,17 @@ func TestListEnvironmentsPagination(t *testing.T) {
 
 	// Test pagination edge cases
 	tests := []struct {
-		name           string
-		limit          int
-		offset         int
-		expectedCount  int
-		expectedTotal  int
+		name          string
+		limit         int
+		offset        int
+		expectedCount int
+		expectedTotal int
 	}{
 		{"first page", 3, 0, 3, 10},
 		{"middle page", 3, 3, 3, 10},
 		{"last page", 3, 9, 1, 10},
 		{"offset beyond total", 3, 100, 0, 10},
-		{"zero limit", 0, 0, 10, 10}, // Should default to 100
+		{"zero limit", 0, 0, 10, 10},      // Should default to 100
 		{"negative offset", 3, -1, 3, 10}, // Should default to 0
 		{"large limit", 10000, 0, 10, 10}, // Should cap at 1000
 	}
@@ -114,7 +114,7 @@ func TestExecuteCommandTimeout(t *testing.T) {
 
 	// Wait for pod to be created in mock
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Create pod in mock using k8s.PodSpec
 	podSpec := &k8s.PodSpec{
 		Name:      "main",
@@ -153,7 +153,7 @@ func TestGetLogsEmptyLogs(t *testing.T) {
 
 	// Wait for pod creation
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Create pod in mock using k8s.PodSpec
 	podSpec := &k8s.PodSpec{
 		Name:      "main",
@@ -196,7 +196,7 @@ func TestGetLogsWithTail(t *testing.T) {
 
 	// Wait for pod creation
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Create pod in mock using k8s.PodSpec
 	podSpec := &k8s.PodSpec{
 		Name:      "main",

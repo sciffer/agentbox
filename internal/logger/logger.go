@@ -16,7 +16,7 @@ func New(level string) (*Logger, error) {
 	if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
 		zapLevel = zapcore.InfoLevel
 	}
-	
+
 	config := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zapLevel),
 		Development:      false,
@@ -25,12 +25,12 @@ func New(level string) (*Logger, error) {
 		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
-	
+
 	zapLogger, err := config.Build()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &Logger{Logger: zapLogger}, nil
 }
 
@@ -44,12 +44,12 @@ func NewDevelopment() (*Logger, error) {
 		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
-	
+
 	zapLogger, err := config.Build()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &Logger{Logger: zapLogger}, nil
 }
 

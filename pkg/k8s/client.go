@@ -20,7 +20,7 @@ type Client struct {
 func NewClient(kubeconfig string) (*Client, error) {
 	var config *rest.Config
 	var err error
-	
+
 	if kubeconfig == "" {
 		// Use in-cluster config
 		config, err = rest.InClusterConfig()
@@ -34,12 +34,12 @@ func NewClient(kubeconfig string) (*Client, error) {
 			return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
 		}
 	}
-	
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
-	
+
 	return &Client{
 		clientset: clientset,
 		config:    config,
@@ -93,7 +93,7 @@ func (c *Client) GetClusterCapacity(ctx context.Context) (int, string, string, e
 
 	// Format CPU as millicores (e.g., "50000m")
 	cpuStr := fmt.Sprintf("%dm", totalCPU)
-	
+
 	// Format memory (convert bytes to Gi)
 	memoryGi := totalMemory / (1024 * 1024 * 1024)
 	memoryStr := fmt.Sprintf("%dGi", memoryGi)

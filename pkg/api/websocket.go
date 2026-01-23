@@ -5,9 +5,9 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"go.uber.org/zap"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/proxy"
+	"go.uber.org/zap"
 )
 
 // AttachWebSocket handles WebSocket attachment to an environment

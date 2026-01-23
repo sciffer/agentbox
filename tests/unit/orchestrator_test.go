@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 	"github.com/sciffer/agentbox/tests/mocks"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupOrchestrator(t *testing.T) (*orchestrator.Orchestrator, *mocks.MockK8sClient) {
@@ -168,7 +168,7 @@ func TestDeleteEnvironment(t *testing.T) {
 
 	// Wait for async pod creation to complete before deletion
 	time.Sleep(150 * time.Millisecond)
-	
+
 	// Ensure pod exists before deletion (for proper cleanup)
 	pod, _ := mockK8s.GetPod(ctx, env.Namespace, "main")
 	if pod == nil {
@@ -312,7 +312,7 @@ func TestGetLogs(t *testing.T) {
 
 	// Wait for async pod creation
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Ensure pod exists in mock (the async creation should have done this, but verify)
 	// If pod doesn't exist, create it manually for the test
 	pod, err := mockK8s.GetPod(ctx, env.Namespace, "main")

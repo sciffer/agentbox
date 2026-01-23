@@ -18,12 +18,12 @@ func (c *Client) CreateNamespace(ctx context.Context, name string, labels map[st
 			Labels: labels,
 		},
 	}
-	
+
 	_, err := c.clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("failed to create namespace: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -33,7 +33,7 @@ func (c *Client) DeleteNamespace(ctx context.Context, name string) error {
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete namespace: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -58,17 +58,17 @@ func (c *Client) CreateResourceQuota(ctx context.Context, namespace, cpu, memory
 		},
 		Spec: corev1.ResourceQuotaSpec{
 			Hard: corev1.ResourceList{
-				corev1.ResourceLimitsCPU:      resource.MustParse(cpu),
-				corev1.ResourceLimitsMemory:   resource.MustParse(memory),
+				corev1.ResourceLimitsCPU:       resource.MustParse(cpu),
+				corev1.ResourceLimitsMemory:    resource.MustParse(memory),
 				corev1.ResourceRequestsStorage: resource.MustParse(storage),
 			},
 		},
 	}
-	
+
 	_, err := c.clientset.CoreV1().ResourceQuotas(namespace).Create(ctx, quota, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("failed to create resource quota: %w", err)
 	}
-	
+
 	return nil
 }

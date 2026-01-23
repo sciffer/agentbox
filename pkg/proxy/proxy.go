@@ -9,35 +9,35 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"go.uber.org/zap"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
+	"go.uber.org/zap"
 )
 
 // NewUpgrader creates a WebSocket upgrader with configurable origin checking
 func NewUpgrader(allowedOrigins []string) websocket.Upgrader {
 	return websocket.Upgrader{
-		ReadBufferSize:  4096,  // Increased for better performance
+		ReadBufferSize:  4096, // Increased for better performance
 		WriteBufferSize: 4096, // Increased for better performance
 		CheckOrigin: func(r *http.Request) bool {
 			// If no origins specified, allow all (development mode)
 			if len(allowedOrigins) == 0 {
 				return true
 			}
-			
+
 			origin := r.Header.Get("Origin")
 			if origin == "" {
 				return false
 			}
-			
+
 			// Check against allowed origins
 			for _, allowed := range allowedOrigins {
 				if origin == allowed {
 					return true
 				}
 			}
-			
+
 			return false
 		},
 		// Enable compression for better performance
@@ -49,13 +49,13 @@ var upgrader = NewUpgrader(nil) // Default: allow all origins (can be overridden
 
 // Proxy handles WebSocket connections to pod shells
 type Proxy struct {
-	k8sClient     k8s.ClientInterface
-	logger        *logger.Logger
-	sessions      map[string]*Session
-	mu            sync.RWMutex
-	upgrader      websocket.Upgrader
-	maxSessions   int
-	sessionCount  int
+	k8sClient    k8s.ClientInterface
+	logger       *logger.Logger
+	sessions     map[string]*Session
+	mu           sync.RWMutex
+	upgrader     websocket.Upgrader
+	maxSessions  int
+	sessionCount int
 }
 
 // Session represents an active WebSocket session
@@ -79,7 +79,7 @@ func NewProxy(k8sClient k8s.ClientInterface, log *logger.Logger) *Proxy {
 		logger:      log,
 		sessions:    make(map[string]*Session),
 		upgrader:    NewUpgrader(nil), // Default: allow all origins
-		maxSessions: 100,               // Limit concurrent sessions
+		maxSessions: 100,              // Limit concurrent sessions
 	}
 }
 
@@ -100,11 +100,11 @@ func (p *Proxy) HandleWebSocket(w http.ResponseWriter, r *http.Request, namespac
 	p.mu.RLock()
 	sessionCount := len(p.sessions)
 	p.mu.RUnlock()
-	
+
 	if sessionCount >= p.maxSessions {
 		return fmt.Errorf("maximum session limit reached (%d)", p.maxSessions)
 	}
-	
+
 	// Upgrade HTTP connection to WebSocket
 	conn, err := p.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -112,9 +112,9 @@ func (p *Proxy) HandleWebSocket(w http.ResponseWriter, r *http.Request, namespac
 	}
 
 	sessionID := fmt.Sprintf("%s-%s-%d", namespace, podName, time.Now().Unix())
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	session := &Session{
 		ID:        sessionID,
 		Namespace: namespace,
@@ -220,7 +220,7 @@ func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType stri
 	// Use larger buffer for better performance
 	buf := make([]byte, 16384) // 16KB buffer
 	now := time.Now()
-	
+
 	for {
 		n, err := reader.Read(buf)
 		if err != nil {
@@ -257,11 +257,11 @@ func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType stri
 				}
 			}
 			session.mu.Unlock()
-			
+
 			if closed {
 				return
 			}
-			
+
 			// Update timestamp for next message
 			now = time.Now()
 		}

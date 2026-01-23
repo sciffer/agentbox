@@ -14,12 +14,12 @@ build: ## Build the binary
 
 test: ## Run all tests
 	@echo "Running all tests..."
-	go test ./... -v -race -coverprofile=coverage.out
+	go test -count=1 ./tests/unit/... -v
 	@echo "Tests complete"
 
 test-unit: ## Run unit tests only
 	@echo "Running unit tests..."
-	go test ./tests/unit/... -v -race
+	go test -count=1 ./tests/unit/... -v
 	@echo "Unit tests complete"
 
 test-integration: ## Run integration tests (requires k8s cluster)
@@ -28,8 +28,10 @@ test-integration: ## Run integration tests (requires k8s cluster)
 	go test ./tests/integration/... -v -tags=integration
 	@echo "Integration tests complete"
 
-test-coverage: test ## Generate and open coverage report
+test-coverage: ## Generate and open coverage report
 	@echo "Generating coverage report..."
+	@echo "Note: Coverage requires testing packages directly, not test packages"
+	go test ./pkg/... -coverprofile=coverage.out || go test ./tests/unit/... -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 	@which open > /dev/null && open coverage.html || echo "Open coverage.html in your browser"

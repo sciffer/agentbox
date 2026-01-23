@@ -86,7 +86,7 @@ func (c *Client) UpdateNetworkPolicy(ctx context.Context, namespace string, allo
 	if len(allowedCIDRs) == 0 {
 		return fmt.Errorf("at least one CIDR must be provided")
 	}
-	
+
 	policy, err := c.clientset.NetworkingV1().NetworkPolicies(namespace).Get(ctx, "isolation-policy", metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get network policy: %w", err)
@@ -95,7 +95,7 @@ func (c *Client) UpdateNetworkPolicy(ctx context.Context, namespace string, allo
 	// Pre-allocate egress rules slice
 	newEgressRules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(policy.Spec.Egress)+len(allowedCIDRs))
 	newEgressRules = append(newEgressRules, policy.Spec.Egress...)
-	
+
 	// Add CIDR blocks to egress rules
 	for _, cidr := range allowedCIDRs {
 		if cidr == "" {
@@ -111,7 +111,7 @@ func (c *Client) UpdateNetworkPolicy(ctx context.Context, namespace string, allo
 			},
 		})
 	}
-	
+
 	policy.Spec.Egress = newEgressRules
 
 	_, err = c.clientset.NetworkingV1().NetworkPolicies(namespace).Update(ctx, policy, metav1.UpdateOptions{})

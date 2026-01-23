@@ -19,23 +19,23 @@ var _ k8s.ClientInterface = (*MockK8sClient)(nil)
 // MockK8sClient is a mock implementation of the Kubernetes client for testing
 // It implements all methods of k8s.Client for testing purposes
 type MockK8sClient struct {
-	namespaces        map[string]bool
-	pods              map[string]map[string]*corev1.Pod
-	quotas            map[string]bool
-	policies          map[string]bool
-	podLogs           map[string]map[string]string // namespace -> pod -> logs
-	healthCheckError  bool
-	mu                sync.RWMutex
+	namespaces       map[string]bool
+	pods             map[string]map[string]*corev1.Pod
+	quotas           map[string]bool
+	policies         map[string]bool
+	podLogs          map[string]map[string]string // namespace -> pod -> logs
+	healthCheckError bool
+	mu               sync.RWMutex
 }
 
 // NewMockK8sClient creates a new mock Kubernetes client
 func NewMockK8sClient() *MockK8sClient {
 	return &MockK8sClient{
-		namespaces: make(map[string]bool),
-		pods:       make(map[string]map[string]*corev1.Pod),
-		quotas:     make(map[string]bool),
-		policies:   make(map[string]bool),
-		podLogs:    make(map[string]map[string]string),
+		namespaces:       make(map[string]bool),
+		pods:             make(map[string]map[string]*corev1.Pod),
+		quotas:           make(map[string]bool),
+		policies:         make(map[string]bool),
+		podLogs:          make(map[string]map[string]string),
 		healthCheckError: false,
 	}
 }
@@ -54,7 +54,7 @@ func (m *MockK8sClient) Config() *rest.Config {
 func (m *MockK8sClient) HealthCheck(ctx context.Context) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if m.healthCheckError {
 		return fmt.Errorf("health check failed")
 	}
@@ -312,7 +312,7 @@ func (m *MockK8sClient) SetHealthCheckError(fail bool) {
 func (m *MockK8sClient) SetPodLogs(namespace, podName, logs string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if m.podLogs[namespace] == nil {
 		m.podLogs[namespace] = make(map[string]string)
 	}
