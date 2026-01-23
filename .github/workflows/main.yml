@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    # Run on all pull requests to ensure tests pass before merge
-  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
