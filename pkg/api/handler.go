@@ -258,7 +258,7 @@ func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, ctx context
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
 
-	// Create a context that can be cancelled when client disconnects
+	// Create a context that can be canceled when client disconnects
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -295,7 +295,7 @@ func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, ctx context
 	now := time.Now()
 
 	for scanner.Scan() {
-		// Check if context was cancelled (client disconnected)
+		// Check if context was canceled (client disconnected)
 		select {
 		case <-streamCtx.Done():
 			return

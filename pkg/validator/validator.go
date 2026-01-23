@@ -11,9 +11,9 @@ import (
 
 var (
 	// Valid Kubernetes resource formats
-	cpuRegex     = regexp.MustCompile(`^([0-9]+)m?$`)
-	memoryRegex  = regexp.MustCompile(`^([0-9]+)(Mi|Gi|M|G|Ki|K)?$`)
-	storageRegex = regexp.MustCompile(`^([0-9]+)(Mi|Gi|Ti|M|G|T|Ki|K)?$`)
+	cpuRegex     = regexp.MustCompile(`^(\d+)m?$`)
+	memoryRegex  = regexp.MustCompile(`^(\d+)(Mi|Gi|M|G|Ki|K)?$`)
+	storageRegex = regexp.MustCompile(`^(\d+)(Mi|Gi|Ti|M|G|T|Ki|K)?$`)
 	nameRegex    = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 )
 
