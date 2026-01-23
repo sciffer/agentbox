@@ -341,7 +341,7 @@ func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, ctx context
 		now = time.Now() // Update timestamp for next line
 	}
 
-		if err := scanner.Err(); err != nil && err != io.EOF {
+	if err := scanner.Err(); err != nil && err != io.EOF {
 		h.logger.Error("error reading log stream", zap.Error(err))
 		errorJSON, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("error reading logs: %v", err)})
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
