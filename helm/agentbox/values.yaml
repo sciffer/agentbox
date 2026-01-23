@@ -116,9 +116,51 @@ env: []
 #  - name: AGENTBOX_AUTH_ENABLED
 #    value: "true"
 
-# Secrets (for sensitive data like auth secret)
-secrets: {}
-#  authSecret: "your-auth-secret-here"
+# Secrets configuration
+# These can reference existing Kubernetes secrets or be created via secret.yaml
+secrets:
+  # Database configuration
+  # If using PostgreSQL, set dbSecretName and dbSecretKey
+  # If using SQLite, set dbPath (or use default)
+  dbSecretName: ""  # Name of existing secret containing database DSN
+  dbSecretKey: "dsn"  # Key in secret containing PostgreSQL connection string
+  
+  # Admin user configuration
+  adminSecretName: ""  # Name of existing secret containing admin credentials
+  adminUsernameKey: "username"  # Key for admin username
+  adminPasswordKey: "password"  # Key for admin password
+  adminEmailKey: "email"  # Key for admin email (optional)
+  
+  # JWT configuration
+  jwtSecretName: ""  # Name of existing secret containing JWT secret
+  jwtSecretKey: "secret"  # Key in secret containing JWT signing secret
+  
+  # API Key prefix (optional, can be set via env var)
+  apiKeyPrefix: "ak_live_"
+  
+  # Metrics configuration
+  metricsEnabled: true
+  metricsCollectionInterval: "30s"
+  
+  # Google OAuth (optional)
+  googleOAuthSecretName: ""  # Name of existing secret containing OAuth credentials
+  googleClientIDKey: "client_id"
+  googleClientSecretKey: "client_secret"
+  
+  # Create secrets if not provided (set to false to use existing secrets only)
+  createSecrets: true
+  
+  # Values for secrets creation (only used if createSecrets is true)
+  # If you want to provide values directly (not recommended for production)
+  jwtSecret: ""  # If empty, will be auto-generated
+  dbDSN: ""  # PostgreSQL connection string (if using PostgreSQL)
+  dbPath: ""  # SQLite file path (if using SQLite, defaults to ./agentbox.db)
+  adminUsername: "admin"  # Default admin username
+  adminPassword: ""  # If empty, will be auto-generated
+  adminEmail: ""  # Optional admin email
+  jwtExpiry: "15m"  # JWT token expiry duration
+  googleClientID: ""  # Google OAuth client ID (optional)
+  googleClientSecret: ""  # Google OAuth client secret (optional)
 
 # Liveness probe
 livenessProbe:
