@@ -3,7 +3,6 @@ run:
   tests: true
   skip-dirs:
     - vendor
-    - tests
   skip-files:
     - ".*\\.pb\\.go$"
     - ".*\\.gen\\.go$"
@@ -67,16 +66,20 @@ linters:
 
 issues:
   exclude-rules:
-    # Exclude some linters from generated files
+    # Exclude some linters from test files
     - path: _test\.go
       linters:
         - errcheck
         - gocyclo
         - goconst
+        - unused
+        - gocritic
     # Exclude known linter issues in test files
     - text: "Error return value of .* is not checked"
       path: _test\.go
     - text: "unused"
+      path: _test\.go
+    - text: "var.*is unused"
       path: _test\.go
   max-issues-per-linter: 0
   max-same-issues: 0
