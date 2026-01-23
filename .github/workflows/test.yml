@@ -125,16 +125,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          # Use a combination of runner OS and a hash of the Dockerfile and source files for the key
-          key: ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile') }}-${{ hashFiles('**/*.py') }} # Example key
-          restore-keys: |
-            ${{ runner.os }}-buildx-${{ hashFiles('**/Dockerfile') }}
-            ${{ runner.os }}-buildx-
-
       - name: Verify required files exist
         run: |
           if [ ! -f "config/config.yaml" ]; then
@@ -152,11 +142,11 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: false
+          push: true
           tags: agentbox:test
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
 
       - name: Test Docker image
         run: |
