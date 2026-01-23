@@ -1,0 +1,471 @@
+# AgentBox - Isolated Execution Orchestration Platform
+
+## Overview
+
+AgentBox is a lightweight, scalable execution orchestration platform designed for running AI agent workloads in isolated environments. It provides fast startup times, strong isolation guarantees, and simple infrastructure requirements.
+
+## Architecture
+
+### System Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         API Server                          │
+│  (REST API + WebSocket Proxy for interactive access)       │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+┌──────────────────┴──────────────────────────────────────────┐
+│                      Orchestrator                           │
+│  (Lifecycle Management + Scheduling + State Management)     │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+┌──────────────────┴──────────────────────────────────────────┐
+│                   Kubernetes Cluster                        │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐           │
+│  │ Namespace  │  │ Namespace  │  │ Namespace  │  ...      │
+│  │  Agent-1   │  │  Agent-2   │  │  Agent-N   │           │
+│  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │           │
+│  │ │  Pod   │ │  │ │  Pod   │ │  │ │  Pod   │ │           │
+│  │ │(gVisor)│ │  │ │(gVisor)│ │  │ │(gVisor)│ │           │
+│  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │           │
+│  └────────────┘  └────────────┘  └────────────┘           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Security Model
+
+Each execution environment is isolated via:
+- **Kubernetes Namespace** - Logical isolation
+- **Network Policies** - Traffic isolation between environments
+- **gVisor Runtime** - Syscall-level isolation
+- **Resource Quotas** - CPU/Memory limits per environment
+- **RBAC** - Fine-grained access control
+- **Pod Security Standards** - Restricted mode enforcement
+
+## API Specification
+
+### Base URL
+```
+http://localhost:8080/api/v1
+```
+
+### Authentication
+API uses Bearer token authentication:
+```
+Authorization: Bearer <token>
+```
+
+### Endpoints
+
+#### 1. Create Environment
+
+**POST** `/environments`
+
+Creates a new isolated execution environment.
+
+**Request Body:**
+```json
+{
+  "name": "agent-task-123",
+  "image": "python:3.11-slim",
+  "resources": {
+    "cpu": "500m",
+    "memory": "512Mi",
+    "storage": "1Gi"
+  },
+  "timeout": 3600,
+  "env": {
+    "API_KEY": "secret",
+    "TASK_ID": "123"
+  },
+  "command": ["/bin/bash"],
+  "labels": {
+    "team": "ai-research",
+    "project": "agent-framework"
+  }
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "id": "env-a1b2c3d4",
+  "name": "agent-task-123",
+  "status": "pending",
+  "created_at": "2026-01-22T10:30:00Z",
+  "endpoint": "wss://agentbox.example.com/environments/env-a1b2c3d4/attach",
+  "namespace": "agentbox-env-a1b2c3d4"
+}
+```
+
+#### 2. Get Environment
+
+**GET** `/environments/{id}`
+
+Retrieves environment details and current status.
+
+**Response:** `200 OK`
+```json
+{
+  "id": "env-a1b2c3d4",
+  "name": "agent-task-123",
+  "status": "running",
+  "image": "python:3.11-slim",
+  "created_at": "2026-01-22T10:30:00Z",
+  "started_at": "2026-01-22T10:30:05Z",
+  "resources": {
+    "cpu": "500m",
+    "memory": "512Mi",
+    "storage": "1Gi"
+  },
+  "endpoint": "wss://agentbox.example.com/environments/env-a1b2c3d4/attach",
+  "namespace": "agentbox-env-a1b2c3d4",
+  "metrics": {
+    "cpu_usage": "120m",
+    "memory_usage": "256Mi"
+  }
+}
+```
+
+**Status Values:**
+- `pending` - Environment is being created
+- `running` - Environment is active and ready
+- `terminating` - Environment is shutting down
+- `terminated` - Environment has been cleaned up
+- `failed` - Environment failed to start
+
+#### 3. List Environments
+
+**GET** `/environments`
+
+Lists all environments with optional filtering.
+
+**Query Parameters:**
+- `status` - Filter by status (e.g., `?status=running`)
+- `label` - Filter by label (e.g., `?label=team=ai-research`)
+- `limit` - Max results (default: 100)
+- `offset` - Pagination offset (default: 0)
+
+**Response:** `200 OK`
+```json
+{
+  "environments": [
+    {
+      "id": "env-a1b2c3d4",
+      "name": "agent-task-123",
+      "status": "running",
+      "created_at": "2026-01-22T10:30:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 100,
+  "offset": 0
+}
+```
+
+#### 4. Execute Command
+
+**POST** `/environments/{id}/exec`
+
+Executes a command in the environment and returns output.
+
+**Request Body:**
+```json
+{
+  "command": ["python", "-c", "print('hello')"],
+  "timeout": 30
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "stdout": "hello\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 145
+}
+```
+
+#### 5. Attach to Environment (WebSocket)
+
+**WebSocket** `/environments/{id}/attach`
+
+Opens an interactive WebSocket connection for real-time I/O.
+
+**Connection:**
+```javascript
+const ws = new WebSocket('wss://agentbox.example.com/environments/env-a1b2c3d4/attach');
+
+// Send input
+ws.send(JSON.stringify({
+  type: "stdin",
+  data: "ls -la\n"
+}));
+
+// Receive output
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  // msg.type: "stdout" | "stderr" | "exit"
+  // msg.data: output content
+};
+```
+
+**Message Format:**
+
+Client → Server:
+```json
+{
+  "type": "stdin",
+  "data": "command input"
+}
+```
+
+Server → Client:
+```json
+{
+  "type": "stdout",
+  "data": "command output",
+  "timestamp": "2026-01-22T10:30:10Z"
+}
+```
+
+#### 6. Delete Environment
+
+**DELETE** `/environments/{id}`
+
+Terminates and removes an environment.
+
+**Query Parameters:**
+- `force` - Force immediate termination (default: false)
+
+**Response:** `204 No Content`
+
+#### 7. Get Environment Logs
+
+**GET** `/environments/{id}/logs`
+
+Retrieves logs from the environment.
+
+**Query Parameters:**
+- `tail` - Number of lines from end (e.g., `?tail=100`)
+- `follow` - Stream logs (boolean, default: false)
+- `timestamps` - Include timestamps (boolean, default: true)
+
+**Response:** `200 OK`
+```json
+{
+  "logs": [
+    {
+      "timestamp": "2026-01-22T10:30:10Z",
+      "stream": "stdout",
+      "message": "Application started"
+    }
+  ]
+}
+```
+
+#### 8. Health Check
+
+**GET** `/health`
+
+System health status.
+
+**Response:** `200 OK`
+```json
+{
+  "status": "healthy",
+  "version": "1.0.0",
+  "kubernetes": {
+    "connected": true,
+    "version": "1.28.0"
+  },
+  "capacity": {
+    "total_nodes": 10,
+    "available_cpu": "50000m",
+    "available_memory": "100Gi"
+  }
+}
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Server Configuration
+AGENTBOX_PORT=8080
+AGENTBOX_HOST=0.0.0.0
+AGENTBOX_LOG_LEVEL=info
+
+# Kubernetes Configuration
+AGENTBOX_KUBECONFIG=/path/to/kubeconfig
+AGENTBOX_NAMESPACE_PREFIX=agentbox-
+AGENTBOX_RUNTIME_CLASS=gvisor
+
+# Security
+AGENTBOX_AUTH_ENABLED=true
+AGENTBOX_AUTH_SECRET=your-secret-key
+
+# Resource Limits (defaults)
+AGENTBOX_DEFAULT_CPU_LIMIT=1000m
+AGENTBOX_DEFAULT_MEMORY_LIMIT=1Gi
+AGENTBOX_DEFAULT_STORAGE_LIMIT=5Gi
+AGENTBOX_MAX_ENVIRONMENTS_PER_USER=100
+
+# Timeouts
+AGENTBOX_DEFAULT_TIMEOUT=3600
+AGENTBOX_MAX_TIMEOUT=86400
+AGENTBOX_STARTUP_TIMEOUT=60
+```
+
+### Kubernetes Requirements
+
+**Minimum Version:** 1.25+
+
+**Required Features:**
+- RuntimeClass support
+- NetworkPolicy support
+- ResourceQuota support
+- RBAC enabled
+
+**Recommended:**
+- gVisor RuntimeClass installed
+- Metrics Server for resource monitoring
+- CNI plugin with NetworkPolicy support (Calico, Cilium, etc.)
+
+## Resource Model
+
+### Default Resources per Environment
+
+```yaml
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+    ephemeral-storage: 500Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+    ephemeral-storage: 5Gi
+```
+
+### Scaling Considerations
+
+- **Per Node:** ~100-200 environments (depends on resources)
+- **Cluster-wide:** 10,000+ environments across multiple nodes
+- **Startup Time:** 2-5 seconds per environment
+- **Network Overhead:** ~1MB per active WebSocket connection
+
+## Security Best Practices
+
+1. **Image Validation:** Use only trusted, scanned container images
+2. **Network Isolation:** Apply strict NetworkPolicies by default
+3. **Resource Limits:** Always enforce CPU/memory limits
+4. **Secret Management:** Use Kubernetes Secrets, never plain env vars
+5. **Runtime Security:** Enable gVisor for syscall filtering
+6. **API Authentication:** Always use token-based auth in production
+7. **Audit Logging:** Enable audit logs for compliance
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| 400 | Invalid request parameters |
+| 401 | Authentication required |
+| 403 | Insufficient permissions |
+| 404 | Environment not found |
+| 409 | Environment already exists |
+| 429 | Rate limit exceeded |
+| 500 | Internal server error |
+| 503 | Service unavailable (k8s connectivity) |
+
+## Monitoring & Observability
+
+### Metrics (Prometheus format)
+
+```
+agentbox_environments_total{status="running|terminated|failed"}
+agentbox_environment_creation_duration_seconds
+agentbox_environment_lifetime_seconds
+agentbox_api_request_duration_seconds{endpoint,method,status}
+agentbox_websocket_connections_active
+agentbox_kubernetes_api_calls_total{operation,status}
+```
+
+### Logging
+
+Structured JSON logs with fields:
+- `timestamp`
+- `level` (debug, info, warn, error)
+- `environment_id`
+- `user_id`
+- `operation`
+- `message`
+- `duration_ms`
+
+## Development
+
+### Building from Source
+
+```bash
+# Clone repository
+git clone https://github.com/yourorg/agentbox.git
+cd agentbox
+
+# Build
+go build -o agentbox ./cmd/server
+
+# Run tests
+go test ./...
+
+# Run locally
+./agentbox --config config.yaml
+```
+
+### Project Structure
+
+```
+agentbox/
+├── cmd/
+│   └── server/          # Main entry point
+├── pkg/
+│   ├── api/             # HTTP handlers
+│   ├── orchestrator/    # K8s orchestration logic
+│   ├── auth/            # Authentication
+│   ├── proxy/           # WebSocket proxy
+│   └── models/          # Data models
+├── internal/
+│   └── k8s/             # Kubernetes client wrapper
+├── tests/
+│   ├── unit/            # Unit tests
+│   └── integration/     # Integration tests
+├── docs/                # Documentation
+├── deploy/              # Kubernetes manifests
+└── go.mod
+```
+
+## Deployment
+
+### Docker
+
+```bash
+docker build -t agentbox:latest .
+docker run -p 8080:8080 \
+  -v ~/.kube/config:/kubeconfig \
+  -e AGENTBOX_KUBECONFIG=/kubeconfig \
+  agentbox:latest
+```
+
+### Kubernetes
+
+```bash
+kubectl apply -f deploy/namespace.yaml
+kubectl apply -f deploy/rbac.yaml
+kubectl apply -f deploy/deployment.yaml
+kubectl apply -f deploy/service.yaml
+```
+
+## License
+
+MIT License - see LICENSE file for details
