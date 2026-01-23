@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"go.uber.org/zap"
+
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 	"github.com/sciffer/agentbox/pkg/validator"
-	"go.uber.org/zap"
 )
 
 // Handler holds dependencies for HTTP handlers

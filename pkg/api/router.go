@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gorilla/mux"
+
 	"github.com/sciffer/agentbox/pkg/proxy"
 )
 

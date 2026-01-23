@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
+
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
-	"go.uber.org/zap"
 )
 
 // NewUpgrader creates a WebSocket upgrader with configurable origin checking

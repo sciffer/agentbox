@@ -4,9 +4,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sciffer/agentbox/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sciffer/agentbox/internal/config"
 )
 
 func TestLoadConfig(t *testing.T) {

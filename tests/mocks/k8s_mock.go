@@ -196,7 +196,11 @@ func (m *MockK8sClient) WaitForPodRunning(ctx context.Context, namespace, name s
 }
 
 // ExecInPod simulates command execution in a pod
-func (m *MockK8sClient) ExecInPod(ctx context.Context, namespace, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func (m *MockK8sClient) ExecInPod(ctx context.Context,
+	namespace, podName string,
+	command []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -236,7 +240,7 @@ func (m *MockK8sClient) GetPodLogs(ctx context.Context, namespace, podName strin
 }
 
 // ListPods lists mock pods in a namespace
-func (m *MockK8sClient) ListPods(ctx context.Context, namespace string, labelSelector string) (*corev1.PodList, error) {
+func (m *MockK8sClient) ListPods(ctx context.Context, namespace, labelSelector string) (*corev1.PodList, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

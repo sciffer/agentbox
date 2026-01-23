@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/api"
@@ -17,7 +19,6 @@ import (
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 	"github.com/sciffer/agentbox/pkg/proxy"
 	"github.com/sciffer/agentbox/pkg/validator"
-	"go.uber.org/zap"
 )
 
 var (

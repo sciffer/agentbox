@@ -3,9 +3,10 @@ package unit
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/validator"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestValidateCreateRequest(t *testing.T) {

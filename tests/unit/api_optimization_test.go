@@ -7,9 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sciffer/agentbox/pkg/models"
 )
 
 func TestCreateEnvironmentLargeBody(t *testing.T) {

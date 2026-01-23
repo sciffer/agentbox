@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/labels"
+
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
-	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/labels"
 )
 
 // Orchestrator manages environment lifecycle
