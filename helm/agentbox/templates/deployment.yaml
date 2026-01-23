@@ -42,6 +42,7 @@ spec:
               containerPort: {{ .Values.config.server.port }}
               protocol: TCP
           env:
+            # Server configuration
             - name: AGENTBOX_PORT
               value: "{{ .Values.config.server.port }}"
             - name: AGENTBOX_HOST
@@ -54,6 +55,131 @@ spec:
               value: "{{ .Values.config.kubernetes.runtime_class }}"
             - name: AGENTBOX_AUTH_ENABLED
               value: "{{ .Values.config.auth.enabled }}"
+            
+            # Database configuration
+            {{- if .Values.secrets.dbSecretName }}
+            - name: AGENTBOX_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbSecretName }}
+                  key: {{ .Values.secrets.dbSecretKey }}
+            {{- else if .Values.secrets.createSecrets }}
+            - name: AGENTBOX_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: db-dsn
+                  optional: true
+            {{- end }}
+            {{- if .Values.secrets.dbPath }}
+            - name: AGENTBOX_DB_PATH
+              value: "{{ .Values.secrets.dbPath }}"
+            {{- end }}
+            
+            # Admin user configuration
+            {{- if .Values.secrets.adminSecretName }}
+            - name: AGENTBOX_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.adminSecretName }}
+                  key: {{ .Values.secrets.adminUsernameKey }}
+            - name: AGENTBOX_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.adminSecretName }}
+                  key: {{ .Values.secrets.adminPasswordKey }}
+            {{- if .Values.secrets.adminEmailKey }}
+            - name: AGENTBOX_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.adminSecretName }}
+                  key: {{ .Values.secrets.adminEmailKey }}
+                  optional: true
+            {{- end }}
+            {{- else if .Values.secrets.createSecrets }}
+            - name: AGENTBOX_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: admin-username
+            - name: AGENTBOX_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: admin-password
+            {{- if .Values.secrets.adminEmail }}
+            - name: AGENTBOX_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: admin-email
+                  optional: true
+            {{- end }}
+            {{- end }}
+            
+            # JWT configuration
+            {{- if .Values.secrets.jwtSecretName }}
+            - name: AGENTBOX_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.jwtSecretName }}
+                  key: {{ .Values.secrets.jwtSecretKey }}
+            {{- else if .Values.secrets.createSecrets }}
+            - name: AGENTBOX_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: jwt-secret
+            {{- end }}
+            {{- if .Values.secrets.jwtExpiry }}
+            - name: AGENTBOX_JWT_EXPIRY
+              value: "{{ .Values.secrets.jwtExpiry }}"
+            {{- end }}
+            
+            # API Key configuration
+            {{- if .Values.secrets.apiKeyPrefix }}
+            - name: AGENTBOX_API_KEY_PREFIX
+              value: "{{ .Values.secrets.apiKeyPrefix }}"
+            {{- end }}
+            
+            # Metrics configuration
+            - name: AGENTBOX_METRICS_ENABLED
+              value: "{{ .Values.secrets.metricsEnabled }}"
+            - name: AGENTBOX_METRICS_COLLECTION_INTERVAL
+              value: "{{ .Values.secrets.metricsCollectionInterval }}"
+            
+            # Google OAuth configuration (optional)
+            {{- if .Values.secrets.googleOAuthSecretName }}
+            - name: AGENTBOX_GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.googleOAuthSecretName }}
+                  key: {{ .Values.secrets.googleClientIDKey }}
+            - name: AGENTBOX_GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.googleOAuthSecretName }}
+                  key: {{ .Values.secrets.googleClientSecretKey }}
+            {{- else if .Values.secrets.createSecrets }}
+            {{- if .Values.secrets.googleClientID }}
+            - name: AGENTBOX_GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: google-client-id
+                  optional: true
+            {{- end }}
+            {{- if .Values.secrets.googleClientSecret }}
+            - name: AGENTBOX_GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentbox.fullname" . }}-secrets
+                  key: google-client-secret
+                  optional: true
+            {{- end }}
+            {{- end }}
+            
+            # Legacy auth secret (for backward compatibility)
             {{- if .Values.secrets.authSecret }}
             - name: AGENTBOX_AUTH_SECRET
               valueFrom:
@@ -61,6 +187,8 @@ spec:
                   name: {{ include "agentbox.fullname" . }}-secrets
                   key: auth-secret
             {{- end }}
+            
+            # Additional environment variables
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
