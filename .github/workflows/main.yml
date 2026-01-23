@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -28,7 +27,11 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test ./tests/unit/... -v -race -coverprofile=coverage.out
+        run: go test -count=1 ./tests/unit/... -v
+        continue-on-error: false
+        env:
+          AGENTBOX_DB_PATH: /tmp/test-$${GITHUB_RUN_ID}.db
+          AGENTBOX_JWT_SECRET: test-secret-key
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

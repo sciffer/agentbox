@@ -10,26 +10,50 @@ import (
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO: Implement proper origin checking in production
-		return true
-	},
+// NewUpgrader creates a WebSocket upgrader with configurable origin checking
+func NewUpgrader(allowedOrigins []string) websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  4096, // Increased for better performance
+		WriteBufferSize: 4096, // Increased for better performance
+		CheckOrigin: func(r *http.Request) bool {
+			// If no origins specified, allow all (development mode)
+			if len(allowedOrigins) == 0 {
+				return true
+			}
+
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return false
+			}
+
+			// Check against allowed origins
+			for _, allowed := range allowedOrigins {
+				if origin == allowed {
+					return true
+				}
+			}
+
+			return false
+		},
+		// Enable compression for better performance
+		EnableCompression: true,
+	}
 }
 
 // Proxy handles WebSocket connections to pod shells
 type Proxy struct {
-	k8sClient *k8s.Client
-	logger    *logger.Logger
-	sessions  map[string]*Session
-	mu        sync.RWMutex
+	k8sClient   k8s.ClientInterface
+	logger      *logger.Logger
+	sessions    map[string]*Session
+	mu          sync.RWMutex
+	upgrader    websocket.Upgrader
+	maxSessions int
 }
 
 // Session represents an active WebSocket session
@@ -47,26 +71,48 @@ type Session struct {
 }
 
 // NewProxy creates a new WebSocket proxy
-func NewProxy(k8sClient *k8s.Client, log *logger.Logger) *Proxy {
+func NewProxy(k8sClient k8s.ClientInterface, log *logger.Logger) *Proxy {
 	return &Proxy{
-		k8sClient: k8sClient,
-		logger:    log,
-		sessions:  make(map[string]*Session),
+		k8sClient:   k8sClient,
+		logger:      log,
+		sessions:    make(map[string]*Session),
+		upgrader:    NewUpgrader(nil), // Default: allow all origins
+		maxSessions: 100,              // Limit concurrent sessions
+	}
+}
+
+// NewProxyWithConfig creates a new WebSocket proxy with custom configuration
+func NewProxyWithConfig(k8sClient k8s.ClientInterface, log *logger.Logger, allowedOrigins []string, maxSessions int) *Proxy {
+	return &Proxy{
+		k8sClient:   k8sClient,
+		logger:      log,
+		sessions:    make(map[string]*Session),
+		upgrader:    NewUpgrader(allowedOrigins),
+		maxSessions: maxSessions,
 	}
 }
 
 // HandleWebSocket handles WebSocket upgrade and connection
 func (p *Proxy) HandleWebSocket(w http.ResponseWriter, r *http.Request, namespace, podName string) error {
+	// Check session limit
+	p.mu.RLock()
+	sessionCount := len(p.sessions)
+	p.mu.RUnlock()
+
+	if sessionCount >= p.maxSessions {
+		return fmt.Errorf("maximum session limit reached (%d)", p.maxSessions)
+	}
+
 	// Upgrade HTTP connection to WebSocket
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := p.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return fmt.Errorf("failed to upgrade connection: %w", err)
 	}
 
 	sessionID := fmt.Sprintf("%s-%s-%d", namespace, podName, time.Now().Unix())
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	session := &Session{
 		ID:        sessionID,
 		Namespace: namespace,
@@ -169,7 +215,10 @@ func (p *Proxy) handleInput(session *Session) {
 
 // streamOutput reads from pod output and writes to WebSocket
 func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType string) {
-	buf := make([]byte, 8192)
+	// Use larger buffer for better performance
+	buf := make([]byte, 16384) // 16KB buffer
+	now := time.Now()
+
 	for {
 		n, err := reader.Read(buf)
 		if err != nil {
@@ -184,14 +233,16 @@ func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType stri
 		}
 
 		if n > 0 {
+			// Reuse timestamp for batch operations
 			msg := models.WebSocketMessage{
 				Type:      streamType,
 				Data:      string(buf[:n]),
-				Timestamp: time.Now(),
+				Timestamp: now,
 			}
 
 			session.mu.Lock()
-			if !session.closed {
+			closed := session.closed
+			if !closed {
 				err = session.Conn.WriteJSON(msg)
 				if err != nil {
 					p.logger.Error("failed to write to websocket",
@@ -204,6 +255,13 @@ func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType stri
 				}
 			}
 			session.mu.Unlock()
+
+			if closed {
+				return
+			}
+
+			// Update timestamp for next message
+			now = time.Now()
 		}
 	}
 }
@@ -241,12 +299,12 @@ func (s *Session) Close() {
 		s.stderr.Close()
 	}
 
-	// Send close message
+	// Send close message (best effort)
 	closeMsg := models.WebSocketMessage{
 		Type:      "exit",
 		Timestamp: time.Now(),
 	}
-	s.Conn.WriteJSON(closeMsg)
+	_ = s.Conn.WriteJSON(closeMsg) // Ignore error on close
 	s.Conn.Close()
 }
 
