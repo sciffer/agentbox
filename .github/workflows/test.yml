@@ -7,9 +7,7 @@ on:
       - develop
       - 'feature/**'
   pull_request:
-    branches:
-      - main
-      - develop
+    # Run on all pull requests regardless of target branch
 
 jobs:
   unit-tests:
