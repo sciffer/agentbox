@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -221,15 +223,16 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// TODO: Support follow parameter for streaming (requires SSE or WebSocket)
-	// For now, we'll just return the logs
 	follow := query.Get("follow") == "true"
+	includeTimestamps := query.Get("timestamps") != "false"
+
+	// If follow=true, stream logs using Server-Sent Events (SSE)
 	if follow {
-		h.respondError(w, http.StatusNotImplemented, "streaming logs not yet implemented", fmt.Errorf("follow parameter not supported"))
+		h.streamLogs(w, r, ctx, envID, tailLines, includeTimestamps)
 		return
 	}
 
-	// Get logs
+	// Get logs (non-streaming)
 	logsResp, err := h.orchestrator.GetLogs(ctx, envID, tailLines)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "failed to get logs", err)
@@ -237,7 +240,6 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Include timestamps by default (can be disabled via query param)
-	includeTimestamps := query.Get("timestamps") != "false"
 	if !includeTimestamps {
 		// Remove timestamps from log entries
 		for i := range logsResp.Logs {
@@ -246,6 +248,105 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, logsResp)
+}
+
+// streamLogs streams logs using Server-Sent Events (SSE)
+func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, ctx context.Context, envID string, tailLines *int64, includeTimestamps bool) {
+	// Set up SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
+
+	// Create a context that can be cancelled when client disconnects
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Monitor client disconnect
+	go func() {
+		<-r.Context().Done()
+		cancel()
+	}()
+
+	// Get log stream from orchestrator
+	logsStream, err := h.orchestrator.StreamLogs(streamCtx, envID, tailLines, true)
+	if err != nil {
+		h.logger.Error("failed to stream logs", zap.String("environment_id", envID), zap.Error(err))
+		// Send error as SSE event
+		errorJSON, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("failed to stream logs: %v", err)})
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+	defer logsStream.Close()
+
+	// Create a flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.logger.Error("streaming not supported")
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Stream logs line by line
+	scanner := bufio.NewScanner(logsStream)
+	now := time.Now()
+
+	for scanner.Scan() {
+		// Check if context was cancelled (client disconnected)
+		select {
+		case <-streamCtx.Done():
+			return
+		default:
+		}
+
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		// Create log entry
+		logEntry := models.LogEntry{
+			Timestamp: now,
+			Stream:    "stdout",
+			Message:   line,
+		}
+
+		// Format as JSON
+		logJSON, err := json.Marshal(logEntry)
+		if err != nil {
+			h.logger.Warn("failed to marshal log entry", zap.Error(err))
+			continue
+		}
+
+		// Send as SSE event
+		if !includeTimestamps {
+			// Create log entry without timestamp
+			logEntry = models.LogEntry{
+				Timestamp: time.Time{},
+				Stream:    "stdout",
+				Message:   line,
+			}
+			logJSON, err = json.Marshal(logEntry)
+			if err != nil {
+				h.logger.Warn("failed to marshal log entry", zap.Error(err))
+				continue
+			}
+		}
+		fmt.Fprintf(w, "data: %s\n\n", string(logJSON))
+
+		flusher.Flush()
+		now = time.Now() // Update timestamp for next line
+	}
+
+		if err := scanner.Err(); err != nil && err != io.EOF {
+		h.logger.Error("error reading log stream", zap.Error(err))
+		errorJSON, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("error reading logs: %v", err)})
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
+		flusher.Flush()
+	}
 }
 
 // Helper functions

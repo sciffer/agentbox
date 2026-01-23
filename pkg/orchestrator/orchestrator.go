@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -395,6 +396,22 @@ func (o *Orchestrator) GetLogs(ctx context.Context, envID string, tailLines *int
 	return &models.LogsResponse{
 		Logs: logs,
 	}, nil
+}
+
+// StreamLogs streams logs from an environment
+func (o *Orchestrator) StreamLogs(ctx context.Context, envID string, tailLines *int64, follow bool) (io.ReadCloser, error) {
+	env, err := o.GetEnvironment(ctx, envID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stream logs from the pod
+	logsStream, err := o.k8sClient.StreamPodLogs(ctx, env.Namespace, "main", tailLines, follow)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stream pod logs: %w", err)
+	}
+
+	return logsStream, nil
 }
 
 // GetHealthInfo retrieves health information including cluster capacity

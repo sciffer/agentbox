@@ -223,6 +223,24 @@ func (c *Client) GetPodLogs(ctx context.Context, namespace, podName string, tail
 	return buf.String(), nil
 }
 
+// StreamPodLogs streams logs from a pod, optionally following new logs
+func (c *Client) StreamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64, follow bool) (io.ReadCloser, error) {
+	opts := &corev1.PodLogOptions{
+		Follow: follow,
+	}
+	if tailLines != nil {
+		opts.TailLines = tailLines
+	}
+
+	req := c.clientset.CoreV1().Pods(namespace).GetLogs(podName, opts)
+	logs, err := req.Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stream pod logs: %w", err)
+	}
+
+	return logs, nil
+}
+
 // ListPods lists all pods in a namespace
 func (c *Client) ListPods(ctx context.Context, namespace string, labelSelector string) (*corev1.PodList, error) {
 	opts := metav1.ListOptions{}

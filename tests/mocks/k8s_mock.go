@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -237,6 +238,37 @@ func (m *MockK8sClient) GetPodLogs(ctx context.Context, namespace, podName strin
 	}
 
 	return "", fmt.Errorf("pod not found")
+}
+
+// StreamPodLogs simulates streaming pod logs
+func (m *MockK8sClient) StreamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64, follow bool) (io.ReadCloser, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Check if we have custom logs set
+	var logContent string
+	if logs, ok := m.podLogs[namespace]; ok {
+		if content, ok := logs[podName]; ok {
+			logContent = content
+		}
+	}
+
+	// Default: check if pod exists
+	if logContent == "" {
+		if pods, ok := m.pods[namespace]; ok {
+			if _, ok := pods[podName]; ok {
+				logContent = "mock log output\n"
+			}
+		}
+	}
+
+	if logContent == "" {
+		return nil, fmt.Errorf("pod not found")
+	}
+
+	// Create a mock stream that implements io.ReadCloser
+	// For testing, we'll return the logs as a stream
+	return io.NopCloser(strings.NewReader(logContent)), nil
 }
 
 // ListPods lists mock pods in a namespace

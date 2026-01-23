@@ -468,13 +468,15 @@ func TestGetLogsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("get logs with follow parameter (not implemented)", func(t *testing.T) {
+	t.Run("get logs with follow parameter (streaming)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+env.ID+"/logs?follow=true", nil)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
-		// Should return 501 Not Implemented
-		assert.Equal(t, http.StatusNotImplemented, rr.Code)
+		// Should return 200 OK with SSE content type
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "text/event-stream", rr.Header().Get("Content-Type"))
+		assert.Contains(t, rr.Body.String(), "data:")
 	})
 
 	t.Run("get logs for non-existent environment", func(t *testing.T) {
