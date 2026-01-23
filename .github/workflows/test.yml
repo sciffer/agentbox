@@ -138,14 +138,14 @@ jobs:
           echo "✅ Required files present"
 
       - name: Build Docker image (test)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: false
           tags: agentbox:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
           platforms: linux/amd64
 
       - name: Test Docker image
