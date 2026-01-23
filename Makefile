@@ -1,4 +1,4 @@
-.PHONY: help build test test-unit test-integration test-coverage run clean docker-build docker-run lint fmt deploy-dev deploy-prod setup-dev
+.PHONY: help build test test-unit test-integration test-coverage run clean docker-build docker-run docker-push helm-lint helm-template helm-install helm-upgrade helm-uninstall helm-package lint fmt deploy-dev deploy-prod setup-dev
 
 APP_NAME=agentbox
 VERSION?=0.1.0
@@ -54,7 +54,7 @@ clean: ## Clean build artifacts
 
 docker-build: ## Build Docker image
 	@echo "Building Docker image..."
-	docker build -t $(DOCKER_IMAGE) -f deploy/docker/Dockerfile .
+	docker build -t $(DOCKER_IMAGE) -f Dockerfile .
 	@echo "Docker image built: $(DOCKER_IMAGE)"
 
 docker-run: ## Run in Docker
@@ -63,6 +63,47 @@ docker-run: ## Run in Docker
 		-v ~/.kube/config:/kubeconfig \
 		-e AGENTBOX_KUBECONFIG=/kubeconfig \
 		$(DOCKER_IMAGE)
+
+docker-push: docker-build ## Build and push Docker image
+	@echo "Pushing Docker image..."
+	docker push $(DOCKER_IMAGE)
+	@echo "Docker image pushed: $(DOCKER_IMAGE)"
+
+helm-lint: ## Lint Helm chart
+	@echo "Linting Helm chart..."
+	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+	helm lint ./helm/agentbox
+	@echo "Helm chart linted"
+
+helm-template: ## Render Helm templates (dry-run)
+	@echo "Rendering Helm templates..."
+	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+	helm template agentbox ./helm/agentbox
+	@echo "Helm templates rendered"
+
+helm-install: ## Install Helm chart
+	@echo "Installing Helm chart..."
+	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+	helm install agentbox ./helm/agentbox
+	@echo "Helm chart installed"
+
+helm-upgrade: ## Upgrade Helm chart
+	@echo "Upgrading Helm chart..."
+	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+	helm upgrade agentbox ./helm/agentbox
+	@echo "Helm chart upgraded"
+
+helm-uninstall: ## Uninstall Helm chart
+	@echo "Uninstalling Helm chart..."
+	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+	helm uninstall agentbox
+	@echo "Helm chart uninstalled"
+
+helm-package: ## Package Helm chart
+	@echo "Packaging Helm chart..."
+	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+	helm package ./helm/agentbox
+	@echo "Helm chart packaged"
 
 lint: ## Run linter
 	@echo "Running linter..."

@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Image digest
+        run: echo "Image pushed with digest: ${{ steps.meta.outputs.digest }}"
+
+  package-helm:
+    name: Package Helm Chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Update Chart version
+        run: |
+          sed -i "s/^version: .*/version: ${{ steps.version.outputs.version }}/" helm/agentbox/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${{ steps.version.outputs.version }}\"/" helm/agentbox/Chart.yaml
+
+      - name: Lint Helm chart
+        run: helm lint ./helm/agentbox
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p helm-packages
+          helm package ./helm/agentbox -d helm-packages
+          helm repo index helm-packages --url https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}
+
+      - name: Upload Helm chart as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart-${{ steps.version.outputs.version }}
+          path: helm-packages/*.tgz
+          retention-days: 90
+
+      - name: Upload Helm chart index
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-index-${{ steps.version.outputs.version }}
+          path: helm-packages/index.yaml
+          retention-days: 90
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-and-push, package-helm]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Download Helm chart artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart-${{ steps.version.outputs.version }}
+          path: helm-packages
+
+      - name: Download Helm index artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-index-${{ steps.version.outputs.version }}
+          path: helm-packages
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          cat > release-notes.md << EOF
+          # AgentBox v${{ steps.version.outputs.version }}
+
+          ## Docker Image
+          \`\`\`
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          \`\`\`
+
+          ## Helm Chart
+          Install using Helm:
+          \`\`\`bash
+          helm install agentbox ./helm-packages/agentbox-${{ steps.version.outputs.version }}.tgz
+          \`\`\`
+
+          Or add to your Helm repository:
+          \`\`\`bash
+          helm repo add agentbox https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}
+          helm install agentbox agentbox/agentbox
+          \`\`\`
+
+          ## Artifacts
+          - Docker image: Available in GitHub Container Registry
+          - Helm chart: Attached to this release
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            helm-packages/*.tgz
+            helm-packages/index.yaml
+          body_path: release-notes.md
+          generate_release_notes: true
+          draft: false
+          prerelease: false

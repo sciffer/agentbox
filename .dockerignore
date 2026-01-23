@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+
+# Build artifacts
+agentbox
+server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+tests/
+*_test.go
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+*.out
+
+# Helm chart (will be in separate directory)
+helm/
+
+# Scripts (not needed in container)
+scripts/
+
+# Validation reports
+*_VALIDATION*.md
+*_REPORT*.md
+VERIFICATION*.md
+SERVICE_*.md
+IMPLEMENTATION_*.md
+SETUP_*.md
+TESTING.md
