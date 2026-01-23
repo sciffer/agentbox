@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -35,11 +36,15 @@ func NewHandler(orch *orchestrator.Orchestrator, val *validator.Validator, log *
 func (h *Handler) CreateEnvironment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	
+	// Limit request body size to prevent abuse
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+	
 	var req models.CreateEnvironmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
+	defer r.Body.Close()
 	
 	// Validate request
 	if err := h.validator.ValidateCreateRequest(&req); err != nil {
@@ -124,11 +129,15 @@ func (h *Handler) ExecuteCommand(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	envID := vars["id"]
 	
+	// Limit request body size
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64KB limit for exec requests
+	
 	var req models.ExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
+	defer r.Body.Close()
 	
 	// Validate request
 	if err := h.validator.ValidateExecRequest(&req); err != nil {
@@ -252,16 +261,31 @@ func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{
 func (h *Handler) respondError(w http.ResponseWriter, status int, message string, err error) {
 	h.logger.Error(message, zap.Error(err))
 	
+	// Don't expose internal error details to client
+	errMsg := message
+	if err != nil {
+		// Only include error message for client errors (4xx), not server errors (5xx)
+		if status >= 400 && status < 500 {
+			errMsg = err.Error()
+		}
+	}
+	
 	errResp := models.ErrorResponse{
 		Error:   message,
-		Message: err.Error(),
+		Message: errMsg,
 		Code:    status,
 	}
 	
 	h.respondJSON(w, status, errResp)
 }
 
-func getUserIDFromContext(ctx interface{}) string {
-	// TODO: Extract user ID from context (set by auth middleware)
+func getUserIDFromContext(ctx context.Context) string {
+	// Extract user ID from context (set by auth middleware)
+	// This is a placeholder - will be implemented when auth middleware is added
+	if userID := ctx.Value("user_id"); userID != nil {
+		if id, ok := userID.(string); ok {
+			return id
+		}
+	}
 	return "anonymous"
 }

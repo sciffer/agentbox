@@ -30,8 +30,27 @@ type PodSpec struct {
 
 // CreatePod creates a new pod
 func (c *Client) CreatePod(ctx context.Context, spec *PodSpec) error {
+	// Validate required fields
+	if spec.Name == "" {
+		return fmt.Errorf("pod name is required")
+	}
+	if spec.Namespace == "" {
+		return fmt.Errorf("pod namespace is required")
+	}
+	if spec.Image == "" {
+		return fmt.Errorf("pod image is required")
+	}
+	if len(spec.Command) == 0 {
+		return fmt.Errorf("pod command is required")
+	}
+	
+	// Pre-allocate env vars slice with known capacity
 	envVars := make([]corev1.EnvVar, 0, len(spec.Env))
 	for k, v := range spec.Env {
+		// Validate env var key
+		if k == "" {
+			continue // Skip empty keys
+		}
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  k,
 			Value: v,
@@ -45,7 +64,13 @@ func (c *Client) CreatePod(ctx context.Context, spec *PodSpec) error {
 			Labels:    spec.Labels,
 		},
 		Spec: corev1.PodSpec{
-			RuntimeClassName: &spec.RuntimeClass,
+			// Only set RuntimeClass if specified (empty string means use default)
+			RuntimeClassName: func() *string {
+				if spec.RuntimeClass != "" {
+					return &spec.RuntimeClass
+				}
+				return nil
+			}(),
 			Containers: []corev1.Container{
 				{
 					Name:    "main",

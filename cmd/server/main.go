@@ -78,7 +78,9 @@ func main() {
 	handler := api.NewHandler(orch, val, log)
 	
 	// Initialize WebSocket proxy
-	proxyHandler := proxy.NewProxy(k8sClient, log)
+	// Use ClientInterface for better testability
+	var k8sInterface k8s.ClientInterface = k8sClient
+	proxyHandler := proxy.NewProxy(k8sInterface, log)
 	
 	// Create router
 	router := api.NewRouter(handler, proxyHandler)

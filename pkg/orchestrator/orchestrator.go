@@ -64,9 +64,11 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 	o.environments[envID] = env
 	o.envMutex.Unlock()
 	
-	// Create Kubernetes resources asynchronously
+	// Create Kubernetes resources asynchronously with timeout
+	provisionCtx, cancel := context.WithTimeout(context.Background(), time.Duration(o.config.Timeouts.StartupTimeout)*time.Second)
 	go func() {
-		if err := o.provisionEnvironment(context.Background(), env); err != nil {
+		defer cancel()
+		if err := o.provisionEnvironment(provisionCtx, env); err != nil {
 			o.logger.Error("failed to provision environment",
 				zap.String("environment_id", envID),
 				zap.Error(err),
@@ -182,10 +184,20 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 
 // ListEnvironments lists all environments with optional filtering
 func (o *Orchestrator) ListEnvironments(ctx context.Context, status *models.EnvironmentStatus, labelSelector string, limit, offset int) (*models.ListEnvironmentsResponse, error) {
-	o.envMutex.RLock()
-	defer o.envMutex.RUnlock()
+	// Validate pagination parameters
+	if limit <= 0 {
+		limit = 100 // Default limit
+	}
+	if limit > 1000 {
+		limit = 1000 // Max limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	
-	envs := make([]models.Environment, 0)
+	o.envMutex.RLock()
+	// Pre-allocate with estimated capacity
+	envs := make([]models.Environment, 0, len(o.environments))
 	
 	for _, env := range o.environments {
 		// Filter by status if specified
@@ -200,6 +212,7 @@ func (o *Orchestrator) ListEnvironments(ctx context.Context, status *models.Envi
 		
 		envs = append(envs, *env)
 	}
+	o.envMutex.RUnlock()
 	
 	// Apply pagination
 	total := len(envs)
@@ -211,6 +224,16 @@ func (o *Orchestrator) ListEnvironments(ctx context.Context, status *models.Envi
 	}
 	if end > total {
 		end = total
+	}
+	
+	// Avoid allocation if no results
+	if start >= end {
+		return &models.ListEnvironmentsResponse{
+			Environments: []models.Environment{},
+			Total:        total,
+			Limit:        limit,
+			Offset:       offset,
+		}, nil
 	}
 	
 	pagedEnvs := envs[start:end]
@@ -234,9 +257,13 @@ func (o *Orchestrator) DeleteEnvironment(ctx context.Context, envID string, forc
 	env.Status = models.StatusTerminating
 	o.envMutex.Unlock()
 	
-	// Delete pod
+	// Delete pod (best effort - namespace deletion will cascade)
 	if err := o.k8sClient.DeletePod(ctx, env.Namespace, "main", force); err != nil {
-		o.logger.Error("failed to delete pod", zap.Error(err))
+		o.logger.Warn("failed to delete pod (will be cleaned up with namespace)",
+			zap.String("environment_id", envID),
+			zap.String("namespace", env.Namespace),
+			zap.Error(err),
+		)
 	}
 	
 	// Delete namespace (cascades to all resources)
@@ -268,10 +295,19 @@ func (o *Orchestrator) ExecuteCommand(ctx context.Context, envID string, command
 		return nil, fmt.Errorf("environment is not running")
 	}
 	
-	// Set timeout if specified
+	// Set timeout if specified (with maximum limit)
+	maxTimeout := o.config.Timeouts.MaxTimeout
 	if timeout > 0 {
+		if timeout > maxTimeout {
+			timeout = maxTimeout
+		}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	} else {
+		// Use default timeout if not specified
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(o.config.Timeouts.DefaultTimeout)*time.Second)
 		defer cancel()
 	}
 	
@@ -306,14 +342,15 @@ func (o *Orchestrator) GetLogs(ctx context.Context, envID string, tailLines *int
 	}
 
 	// Parse logs into LogEntry format
-	// For now, we'll return all logs as stdout entries
-	// In a production system, you'd parse the log format to separate stdout/stderr
-	logs := []models.LogEntry{}
+	// Optimize: Pre-allocate slice with estimated capacity
 	lines := strings.Split(logsStr, "\n")
+	logs := make([]models.LogEntry, 0, len(lines))
+	
+	now := time.Now()
 	for _, line := range lines {
 		if line != "" {
 			logs = append(logs, models.LogEntry{
-				Timestamp: time.Now(), // TODO: Parse actual timestamp from log line if available
+				Timestamp: now, // Use single timestamp for batch
 				Stream:    "stdout",
 				Message:   line,
 			})
@@ -373,8 +410,13 @@ func (o *Orchestrator) GetHealthInfo(ctx context.Context) (*models.HealthRespons
 
 // Helper functions
 
+// generateEnvironmentID generates a unique environment ID
+// Format: env-<8-char-hex> (e.g., env-a1b2c3d4)
 func generateEnvironmentID() string {
-	return "env-" + uuid.New().String()[:8]
+	// Use UUID v4 for better uniqueness
+	id := uuid.New()
+	// Take first 8 characters for shorter IDs
+	return "env-" + id.String()[:8]
 }
 
 func (o *Orchestrator) generateNamespace(envID string) string {
