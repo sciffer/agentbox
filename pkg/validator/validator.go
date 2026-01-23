@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sciffertbox/pkg/models"
+	"github.com/sciffer/agentbox/pkg/models"
 )
 
 var (

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sciffertbox/pkg/models"
-	"github.com/sciffertbox/pkg/validator"
+	"github.com/sciffer/agentbox/pkg/models"
+	"github.com/sciffer/agentbox/pkg/validator"
 )
 
 func TestValidateCreateRequest(t *testing.T) {

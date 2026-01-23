@@ -9,11 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sciffertbox/internal/config"
-	"github.com/sciffertbox/internal/logger"
-	"github.com/sciffertbox/pkg/k8s"
-	"github.com/sciffertbox/pkg/models"
-	"github.com/sciffertbox/pkg/orchestrator"
+	"github.com/sciffer/agentbox/internal/config"
+	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/k8s"
+	"github.com/sciffer/agentbox/pkg/models"
+	"github.com/sciffer/agentbox/pkg/orchestrator"
 )
 
 func setupIntegrationTest(t *testing.T) (*orchestrator.Orchestrator, func()) {

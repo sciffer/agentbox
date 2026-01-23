@@ -10,13 +10,13 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sciffertbox/internal/config"
-	"github.com/sciffertbox/internal/logger"
-	"github.com/sciffertbox/pkg/api"
-	"github.com/sciffertbox/pkg/models"
-	"github.com/sciffertbox/pkg/orchestrator"
-	"github.com/sciffertbox/pkg/validator"
-	"github.com/sciffertbox/tests/mocks"
+	"github.com/sciffer/agentbox/internal/config"
+	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/api"
+	"github.com/sciffer/agentbox/pkg/models"
+	"github.com/sciffer/agentbox/pkg/orchestrator"
+	"github.com/sciffer/agentbox/pkg/validator"
+	"github.com/sciffer/agentbox/tests/mocks"
 )
 
 func setupAPITest(t *testing.T) (*api.Handler, *mux.Router) {

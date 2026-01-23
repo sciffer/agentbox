@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sciffertbox/internal/config"
+	"github.com/sciffer/agentbox/internal/config"
 )
 
 func TestLoadConfig(t *testing.T) {

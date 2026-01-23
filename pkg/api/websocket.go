@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/sciffertbox/pkg/proxy"
+	"github.com/sciffer/agentbox/pkg/proxy"
 )
 
 // AttachWebSocket handles WebSocket attachment to an environment

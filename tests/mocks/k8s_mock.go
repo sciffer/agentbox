@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/sciffertbox/pkg/k8s"
+	"github.com/sciffer/agentbox/pkg/k8s"
 )
 
 // MockK8sClient is a mock implementation of the Kubernetes client for testing

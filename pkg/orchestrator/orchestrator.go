@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sciffertbox/internal/config"
-	"github.com/sciffertbox/internal/logger"
-	"github.com/sciffertbox/pkg/k8s"
-	"github.com/sciffertbox/pkg/models"
+	"github.com/sciffer/agentbox/internal/config"
+	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/k8s"
+	"github.com/sciffer/agentbox/pkg/models"
 )
 
 // Orchestrator manages environment lifecycle

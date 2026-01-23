@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sciffertbox/internal/logger"
-	"github.com/sciffertbox/pkg/k8s"
-	"github.com/sciffertbox/pkg/models"
+	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/k8s"
+	"github.com/sciffer/agentbox/pkg/models"
 )
 
 var upgrader = websocket.Upgrader{

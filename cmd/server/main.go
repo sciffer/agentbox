@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sciffertbox/internal/config"
-	"github.com/sciffertbox/internal/logger"
-	"github.com/sciffertbox/pkg/api"
-	"github.com/sciffertbox/pkg/k8s"
-	"github.com/sciffertbox/pkg/orchestrator"
-	"github.com/sciffertbox/pkg/proxy"
-	"github.com/sciffertbox/pkg/validator"
+	"github.com/sciffer/agentbox/internal/config"
+	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/api"
+	"github.com/sciffer/agentbox/pkg/k8s"
+	"github.com/sciffer/agentbox/pkg/orchestrator"
+	"github.com/sciffer/agentbox/pkg/proxy"
+	"github.com/sciffer/agentbox/pkg/validator"
 )
 
 var (
