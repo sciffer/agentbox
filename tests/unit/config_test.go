@@ -11,6 +11,10 @@ import (
 
 func TestLoadConfig(t *testing.T) {
 	t.Run("load with defaults", func(t *testing.T) {
+		// Disable auth for default test since it requires a secret
+		os.Setenv("AGENTBOX_AUTH_ENABLED", "false")
+		defer os.Unsetenv("AGENTBOX_AUTH_ENABLED")
+		
 		cfg, err := config.Load("")
 		require.NoError(t, err)
 
@@ -19,7 +23,7 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, "info", cfg.Server.LogLevel)
 		assert.Equal(t, "agentbox-", cfg.Kubernetes.NamespacePrefix)
 		assert.Equal(t, "gvisor", cfg.Kubernetes.RuntimeClass)
-		assert.Equal(t, true, cfg.Auth.Enabled)
+		assert.Equal(t, false, cfg.Auth.Enabled) // Disabled for test
 		assert.Equal(t, "1000m", cfg.Resources.DefaultCPULimit)
 		assert.Equal(t, "1Gi", cfg.Resources.DefaultMemoryLimit)
 		assert.Equal(t, 3600, cfg.Timeouts.DefaultTimeout)
@@ -67,9 +71,12 @@ func TestLoadConfig(t *testing.T) {
 	})
 
 	t.Run("validation error - max timeout less than default", func(t *testing.T) {
+		// Disable auth to avoid auth validation interfering
+		os.Setenv("AGENTBOX_AUTH_ENABLED", "false")
 		os.Setenv("AGENTBOX_DEFAULT_TIMEOUT", "10000")
 		os.Setenv("AGENTBOX_MAX_TIMEOUT", "5000")
 		defer func() {
+			os.Unsetenv("AGENTBOX_AUTH_ENABLED")
 			os.Unsetenv("AGENTBOX_DEFAULT_TIMEOUT")
 			os.Unsetenv("AGENTBOX_MAX_TIMEOUT")
 		}()

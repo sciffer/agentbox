@@ -2,10 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
+	"go.uber.org/zap"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
@@ -55,8 +58,8 @@ func (h *Handler) CreateEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	h.logger.Info("environment created",
-		"environment_id", env.ID,
-		"user_id", userID,
+		zap.String("environment_id", env.ID),
+		zap.String("user_id", userID),
 	)
 	
 	h.respondJSON(w, http.StatusCreated, env)
@@ -157,8 +160,8 @@ func (h *Handler) DeleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	h.logger.Info("environment deleted",
-		"environment_id", envID,
-		"force", force,
+		zap.String("environment_id", envID),
+		zap.Bool("force", force),
 	)
 	
 	w.WriteHeader(http.StatusNoContent)
@@ -166,22 +169,73 @@ func (h *Handler) DeleteEnvironment(w http.ResponseWriter, r *http.Request) {
 
 // HealthCheck handles GET /health
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement proper health check
-	resp := models.HealthResponse{
-		Status:  "healthy",
-		Version: "1.0.0",
-		Kubernetes: models.KubernetesHealthStatus{
-			Connected: true,
-			Version:   "1.28.0",
-		},
-		Capacity: models.ClusterCapacity{
-			TotalNodes:      3,
-			AvailableCPU:    "50000m",
-			AvailableMemory: "100Gi",
-		},
+	ctx := r.Context()
+	
+	resp, err := h.orchestrator.GetHealthInfo(ctx)
+	if err != nil {
+		// If we can't get health info, return unhealthy status
+		resp = &models.HealthResponse{
+			Status:  "unhealthy",
+			Version: "1.0.0",
+			Kubernetes: models.KubernetesHealthStatus{
+				Connected: false,
+				Version:   "",
+			},
+			Capacity: models.ClusterCapacity{},
+		}
+		h.logger.Error("failed to get health info", zap.Error(err))
 	}
 	
-	h.respondJSON(w, http.StatusOK, resp)
+	// Return 503 if unhealthy, 200 if healthy
+	statusCode := http.StatusOK
+	if resp.Status == "unhealthy" {
+		statusCode = http.StatusServiceUnavailable
+	}
+	
+	h.respondJSON(w, statusCode, resp)
+}
+
+// GetLogs handles GET /environments/{id}/logs
+func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	envID := vars["id"]
+
+	// Parse query parameters
+	query := r.URL.Query()
+	
+	var tailLines *int64
+	if tailStr := query.Get("tail"); tailStr != "" {
+		if tail, err := strconv.ParseInt(tailStr, 10, 64); err == nil && tail > 0 {
+			tailLines = &tail
+		}
+	}
+
+	// TODO: Support follow parameter for streaming (requires SSE or WebSocket)
+	// For now, we'll just return the logs
+	follow := query.Get("follow") == "true"
+	if follow {
+		h.respondError(w, http.StatusNotImplemented, "streaming logs not yet implemented", fmt.Errorf("follow parameter not supported"))
+		return
+	}
+
+	// Get logs
+	logsResp, err := h.orchestrator.GetLogs(ctx, envID, tailLines)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "failed to get logs", err)
+		return
+	}
+
+	// Include timestamps by default (can be disabled via query param)
+	includeTimestamps := query.Get("timestamps") != "false"
+	if !includeTimestamps {
+		// Remove timestamps from log entries
+		for i := range logsResp.Logs {
+			logsResp.Logs[i].Timestamp = time.Time{}
+		}
+	}
+
+	h.respondJSON(w, http.StatusOK, logsResp)
 }
 
 // Helper functions
@@ -191,12 +245,12 @@ func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{
 	w.WriteHeader(status)
 	
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		h.logger.Error("failed to encode JSON response", "error", err)
+		h.logger.Error("failed to encode JSON response", zap.Error(err))
 	}
 }
 
 func (h *Handler) respondError(w http.ResponseWriter, status int, message string, err error) {
-	h.logger.Error(message, "error", err)
+	h.logger.Error(message, zap.Error(err))
 	
 	errResp := models.ErrorResponse{
 		Error:   message,

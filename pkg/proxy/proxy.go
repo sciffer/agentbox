@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
@@ -81,9 +81,9 @@ func (p *Proxy) HandleWebSocket(w http.ResponseWriter, r *http.Request, namespac
 	p.mu.Unlock()
 
 	p.logger.Info("websocket session started",
-		"session_id", sessionID,
-		"namespace", namespace,
-		"pod", podName,
+		zap.String("session_id", sessionID),
+		zap.String("namespace", namespace),
+		zap.String("pod", podName),
 	)
 
 	// Start handling session
@@ -118,8 +118,8 @@ func (p *Proxy) handleSession(ctx context.Context, session *Session) {
 		)
 		if err != nil {
 			p.logger.Error("pod exec failed",
-				"session_id", session.ID,
-				"error", err,
+				zap.String("session_id", session.ID),
+				zap.Error(err),
 			)
 		}
 		session.Close()
@@ -142,11 +142,11 @@ func (p *Proxy) handleInput(session *Session) {
 		err := session.Conn.ReadJSON(&msg)
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				p.logger.Info("websocket closed normally", "session_id", session.ID)
+				p.logger.Info("websocket closed normally", zap.String("session_id", session.ID))
 			} else {
 				p.logger.Error("failed to read websocket message",
-					"session_id", session.ID,
-					"error", err,
+					zap.String("session_id", session.ID),
+					zap.Error(err),
 				)
 			}
 			session.Close()
@@ -157,8 +157,8 @@ func (p *Proxy) handleInput(session *Session) {
 			_, err := session.stdin.Write([]byte(msg.Data))
 			if err != nil {
 				p.logger.Error("failed to write to stdin",
-					"session_id", session.ID,
-					"error", err,
+					zap.String("session_id", session.ID),
+					zap.Error(err),
 				)
 				session.Close()
 				return
@@ -175,9 +175,9 @@ func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType stri
 		if err != nil {
 			if err != io.EOF {
 				p.logger.Error("failed to read from pod",
-					"session_id", session.ID,
-					"stream", streamType,
-					"error", err,
+					zap.String("session_id", session.ID),
+					zap.String("stream", streamType),
+					zap.Error(err),
 				)
 			}
 			return
@@ -195,8 +195,8 @@ func (p *Proxy) streamOutput(session *Session, reader io.Reader, streamType stri
 				err = session.Conn.WriteJSON(msg)
 				if err != nil {
 					p.logger.Error("failed to write to websocket",
-						"session_id", session.ID,
-						"error", err,
+						zap.String("session_id", session.ID),
+						zap.Error(err),
 					)
 					session.mu.Unlock()
 					session.Close()
@@ -216,7 +216,7 @@ func (p *Proxy) cleanup(session *Session) {
 	delete(p.sessions, session.ID)
 	p.mu.Unlock()
 
-	p.logger.Info("websocket session ended", "session_id", session.ID)
+	p.logger.Info("websocket session ended", zap.String("session_id", session.ID))
 }
 
 // Close closes a session

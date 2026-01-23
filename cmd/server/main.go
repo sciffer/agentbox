@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/api"
@@ -41,25 +42,25 @@ func main() {
 	}
 	defer log.Sync()
 	
-	log.Info("starting agentbox server", "version", "1.0.0")
+	log.Info("starting agentbox server", zap.String("version", "1.0.0"))
 	
 	// Initialize Kubernetes client
 	k8sClient, err := k8s.NewClient(cfg.Kubernetes.Kubeconfig)
 	if err != nil {
-		log.Fatal("failed to create kubernetes client", "error", err)
+		log.Fatal("failed to create kubernetes client", zap.Error(err))
 	}
 	
 	// Verify Kubernetes connectivity
 	ctx := context.Background()
 	if err := k8sClient.HealthCheck(ctx); err != nil {
-		log.Fatal("kubernetes health check failed", "error", err)
+		log.Fatal("kubernetes health check failed", zap.Error(err))
 	}
 	
 	version, err := k8sClient.GetServerVersion(ctx)
 	if err != nil {
-		log.Warn("failed to get kubernetes version", "error", err)
+		log.Warn("failed to get kubernetes version", zap.Error(err))
 	} else {
-		log.Info("connected to kubernetes", "version", version)
+		log.Info("connected to kubernetes", zap.String("version", version))
 	}
 	
 	// Initialize validator
@@ -94,9 +95,9 @@ func main() {
 	
 	// Start server in goroutine
 	go func() {
-		log.Info("server listening", "address", addr)
+		log.Info("server listening", zap.String("address", addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("server failed", "error", err)
+			log.Fatal("server failed", zap.Error(err))
 		}
 	}()
 	
@@ -112,7 +113,7 @@ func main() {
 	defer cancel()
 	
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Error("server forced to shutdown", "error", err)
+		log.Error("server forced to shutdown", zap.Error(err))
 	}
 	
 	log.Info("server stopped")

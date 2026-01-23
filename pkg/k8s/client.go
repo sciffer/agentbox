@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -68,4 +69,34 @@ func (c *Client) GetServerVersion(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return version.GitVersion, nil
+}
+
+// GetClusterCapacity returns cluster capacity information
+func (c *Client) GetClusterCapacity(ctx context.Context) (int, string, string, error) {
+	nodes, err := c.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, "", "", fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	totalNodes := len(nodes.Items)
+	var totalCPU int64
+	var totalMemory int64
+
+	for _, node := range nodes.Items {
+		// Get allocatable resources (what's available for pods)
+		cpu := node.Status.Allocatable["cpu"]
+		memory := node.Status.Allocatable["memory"]
+
+		totalCPU += cpu.MilliValue()
+		totalMemory += memory.Value()
+	}
+
+	// Format CPU as millicores (e.g., "50000m")
+	cpuStr := fmt.Sprintf("%dm", totalCPU)
+	
+	// Format memory (convert bytes to Gi)
+	memoryGi := totalMemory / (1024 * 1024 * 1024)
+	memoryStr := fmt.Sprintf("%dGi", memoryGi)
+
+	return totalNodes, cpuStr, memoryStr, nil
 }

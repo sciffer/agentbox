@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/labels"
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/k8s"
@@ -16,7 +19,7 @@ import (
 
 // Orchestrator manages environment lifecycle
 type Orchestrator struct {
-	k8sClient       *k8s.Client
+	k8sClient       k8s.ClientInterface
 	config          *config.Config
 	logger          *logger.Logger
 	environments    map[string]*models.Environment
@@ -25,7 +28,7 @@ type Orchestrator struct {
 }
 
 // New creates a new orchestrator instance
-func New(k8sClient *k8s.Client, cfg *config.Config, log *logger.Logger) *Orchestrator {
+func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) *Orchestrator {
 	return &Orchestrator{
 		k8sClient:       k8sClient,
 		config:          cfg,
@@ -65,8 +68,8 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 	go func() {
 		if err := o.provisionEnvironment(context.Background(), env); err != nil {
 			o.logger.Error("failed to provision environment",
-				"environment_id", envID,
-				"error", err,
+				zap.String("environment_id", envID),
+				zap.Error(err),
 			)
 			o.updateEnvironmentStatus(envID, models.StatusFailed)
 		}
@@ -149,8 +152,8 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 	o.envMutex.Unlock()
 	
 	o.logger.Info("environment provisioned successfully",
-		"environment_id", env.ID,
-		"namespace", env.Namespace,
+		zap.String("environment_id", env.ID),
+		zap.String("namespace", env.Namespace),
 	)
 	
 	return nil
@@ -170,7 +173,7 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 	if env.Status == models.StatusRunning {
 		pod, err := o.k8sClient.GetPod(ctx, env.Namespace, "main")
 		if err == nil {
-			env.Status = convertPodPhaseToStatus(pod.Status.Phase)
+			env.Status = convertPodPhaseToStatus(string(pod.Status.Phase))
 		}
 	}
 	
@@ -233,7 +236,7 @@ func (o *Orchestrator) DeleteEnvironment(ctx context.Context, envID string, forc
 	
 	// Delete pod
 	if err := o.k8sClient.DeletePod(ctx, env.Namespace, "main", force); err != nil {
-		o.logger.Error("failed to delete pod", "error", err)
+		o.logger.Error("failed to delete pod", zap.Error(err))
 	}
 	
 	// Delete namespace (cascades to all resources)
@@ -247,8 +250,8 @@ func (o *Orchestrator) DeleteEnvironment(ctx context.Context, envID string, forc
 	o.envMutex.Unlock()
 	
 	o.logger.Info("environment deleted",
-		"environment_id", envID,
-		"namespace", env.Namespace,
+		zap.String("environment_id", envID),
+		zap.String("namespace", env.Namespace),
 	)
 	
 	return nil
@@ -289,6 +292,85 @@ func (o *Orchestrator) ExecuteCommand(ctx context.Context, envID string, command
 	}, nil
 }
 
+// GetLogs retrieves logs from an environment
+func (o *Orchestrator) GetLogs(ctx context.Context, envID string, tailLines *int64) (*models.LogsResponse, error) {
+	env, err := o.GetEnvironment(ctx, envID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get logs from the pod
+	logsStr, err := o.k8sClient.GetPodLogs(ctx, env.Namespace, "main", tailLines)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod logs: %w", err)
+	}
+
+	// Parse logs into LogEntry format
+	// For now, we'll return all logs as stdout entries
+	// In a production system, you'd parse the log format to separate stdout/stderr
+	logs := []models.LogEntry{}
+	lines := strings.Split(logsStr, "\n")
+	for _, line := range lines {
+		if line != "" {
+			logs = append(logs, models.LogEntry{
+				Timestamp: time.Now(), // TODO: Parse actual timestamp from log line if available
+				Stream:    "stdout",
+				Message:   line,
+			})
+		}
+	}
+
+	return &models.LogsResponse{
+		Logs: logs,
+	}, nil
+}
+
+// GetHealthInfo retrieves health information including cluster capacity
+func (o *Orchestrator) GetHealthInfo(ctx context.Context) (*models.HealthResponse, error) {
+	// Check Kubernetes connectivity
+	connected := true
+	version := ""
+	capacity := models.ClusterCapacity{}
+
+	if err := o.k8sClient.HealthCheck(ctx); err != nil {
+		connected = false
+	} else {
+		// Get version
+		var err error
+		version, err = o.k8sClient.GetServerVersion(ctx)
+		if err != nil {
+			o.logger.Warn("failed to get kubernetes version", zap.Error(err))
+		}
+
+		// Get cluster capacity
+		totalNodes, cpu, memory, err := o.k8sClient.GetClusterCapacity(ctx)
+		if err != nil {
+			o.logger.Warn("failed to get cluster capacity", zap.Error(err))
+		} else {
+			capacity = models.ClusterCapacity{
+				TotalNodes:      totalNodes,
+				AvailableCPU:    cpu,
+				AvailableMemory: memory,
+			}
+		}
+	}
+
+	status := "healthy"
+	if !connected {
+		status = "unhealthy"
+	}
+
+	return &models.HealthResponse{
+		Status:  status,
+		Version: "1.0.0",
+		Kubernetes: models.KubernetesHealthStatus{
+			Connected: connected,
+			Version:   version,
+		},
+		Capacity: capacity,
+	}, nil
+}
+
 // Helper functions
 
 func generateEnvironmentID() string {
@@ -323,10 +405,21 @@ func convertPodPhaseToStatus(phase string) models.EnvironmentStatus {
 	}
 }
 
-func matchesLabelSelector(labels map[string]string, selector string) bool {
-	// Simple implementation: selector format "key=value"
-	// For production, use proper label selector parsing
-	return true // TODO: Implement proper label matching
+func matchesLabelSelector(envLabels map[string]string, selectorStr string) bool {
+	if selectorStr == "" {
+		return true
+	}
+
+	// Parse the selector string using Kubernetes label selector
+	selector, err := labels.Parse(selectorStr)
+	if err != nil {
+		// If parsing fails, return false (don't match)
+		return false
+	}
+
+	// Convert environment labels to labels.Set for matching
+	labelSet := labels.Set(envLabels)
+	return selector.Matches(labelSet)
 }
 
 func (o *Orchestrator) applyNetworkPolicy(ctx context.Context, namespace string) error {

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"go.uber.org/zap"
+	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/proxy"
 )
 
@@ -22,22 +25,22 @@ func (h *Handler) AttachWebSocket(proxyHandler *proxy.Proxy) http.HandlerFunc {
 		}
 
 		// Check if environment is running
-		if env.Status != "running" {
-			h.respondError(w, http.StatusBadRequest, "environment is not running", err)
+		if env.Status != models.StatusRunning {
+			h.respondError(w, http.StatusBadRequest, "environment is not running", fmt.Errorf("environment status is %s", env.Status))
 			return
 		}
 
 		// Handle WebSocket upgrade and proxy to pod
 		if err := proxyHandler.HandleWebSocket(w, r, env.Namespace, "main"); err != nil {
 			h.logger.Error("websocket connection failed",
-				"environment_id", envID,
-				"error", err,
+				zap.String("environment_id", envID),
+				zap.Error(err),
 			)
 			return
 		}
 
 		h.logger.Info("websocket attached",
-			"environment_id", envID,
+			zap.String("environment_id", envID),
 		)
 	}
 }

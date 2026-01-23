@@ -13,9 +13,12 @@ import (
 	"github.com/sciffer/agentbox/pkg/k8s"
 )
 
+// Ensure MockK8sClient implements k8s.ClientInterface
+var _ k8s.ClientInterface = (*MockK8sClient)(nil)
+
 // MockK8sClient is a mock implementation of the Kubernetes client for testing
+// It implements all methods of k8s.Client for testing purposes
 type MockK8sClient struct {
-	*k8s.Client
 	namespaces map[string]bool
 	pods       map[string]map[string]*corev1.Pod
 	quotas     map[string]bool
@@ -53,6 +56,12 @@ func (m *MockK8sClient) GetServerVersion(ctx context.Context) (string, error) {
 	return "v1.28.0", nil
 }
 
+// GetClusterCapacity returns mock cluster capacity
+func (m *MockK8sClient) GetClusterCapacity(ctx context.Context) (int, string, string, error) {
+	// Return mock values: 3 nodes, 50000m CPU, 100Gi memory
+	return 3, "50000m", "100Gi", nil
+}
+
 // CreateNamespace creates a mock namespace
 func (m *MockK8sClient) CreateNamespace(ctx context.Context, name string, labels map[string]string) error {
 	m.mu.Lock()
@@ -78,10 +87,10 @@ func (m *MockK8sClient) DeleteNamespace(ctx context.Context, name string) error 
 }
 
 // NamespaceExists checks if a namespace exists
-func (m *MockK8sClient) NamespaceExists(name string) bool {
+func (m *MockK8sClient) NamespaceExists(ctx context.Context, name string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.namespaces[name]
+	return m.namespaces[name], nil
 }
 
 // CreateResourceQuota creates a mock resource quota
