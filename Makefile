@@ -1,52 +1,45 @@
-.PHONY: help build test test-unit test-integration test-coverage run clean docker-build docker-run docker-push helm-lint helm-template helm-install helm-upgrade helm-uninstall helm-package lint fmt deploy-dev deploy-prod setup-dev
+.PHONY: help build test test-unit test-integration test-coverage run clean docker-build docker-run docker-push helm-lint helm-template helm-install helm-upgrade helm-uninstall helm-package lint fmt deploy-dev deploy-prod setup-dev ui-install ui-dev ui-build ui-install ui-dev ui-build
 
-APP_NAME=agentbox
-VERSION?=0.1.0
-DOCKER_IMAGE?=agentbox:$(VERSION)
+APP_NAME := agentbox
+DOCKER_IMAGE := agentbox:latest
+DOCKER_REGISTRY := ghcr.io
+DOCKER_TAG := latest
 
-help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 
 build: ## Build the binary
 	@echo "Building $(APP_NAME)..."
 	go build -o $(APP_NAME) ./cmd/server
 	@echo "Build complete: ./$(APP_NAME)"
 
-test: ## Run all tests
-	@echo "Running all tests..."
-	go test -count=1 ./tests/unit/... -v
-	@echo "Tests complete"
+test: test-unit ## Run all tests
 
-test-unit: ## Run unit tests only
+test-unit: ## Run unit tests (no k8s required)
 	@echo "Running unit tests..."
 	go test -count=1 ./tests/unit/... -v
-	@echo "Unit tests complete"
 
 test-integration: ## Run integration tests (requires k8s cluster)
 	@echo "Running integration tests..."
+	go test -count=1 -tags=integration ./tests/integration/... -v
 	@echo "Note: This requires a running Kubernetes cluster"
-	go test ./tests/integration/... -v -tags=integration
-	@echo "Integration tests complete"
 
-test-coverage: ## Generate and open coverage report
+test-coverage: ## Generate test coverage report
 	@echo "Generating coverage report..."
-	@echo "Note: Coverage requires testing packages directly, not test packages"
-	go test ./pkg/... -coverprofile=coverage.out || go test ./tests/unit/... -coverprofile=coverage.out
+	go test -coverprofile=coverage.out ./pkg/...
 	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
-	@which open > /dev/null && open coverage.html || echo "Open coverage.html in your browser"
+	@echo "Coverage report: coverage.html"
 
 test-watch: ## Run tests in watch mode (requires entr)
 	@echo "Watching for changes..."
-	find . -name "*.go" | entr -c go test ./tests/unit/... -v
+	find . -name "*.go" -not -path "./vendor/*" | entr -c go test ./tests/unit/...
 
-run: ## Run the application locally
-	@echo "Starting $(APP_NAME)..."
-	go run ./cmd/server
-
-run-dev: ## Run with development config
-	@echo "Starting $(APP_NAME) in development mode..."
-	go run ./cmd/server --config config/config.yaml
+run: build ## Build and run the application
+	@echo "Running $(APP_NAME)..."
+	./$(APP_NAME)
 
 clean: ## Clean build artifacts
 	@echo "Cleaning..."
@@ -59,106 +52,74 @@ docker-build: ## Build Docker image
 	docker build -t $(DOCKER_IMAGE) -f Dockerfile .
 	@echo "Docker image built: $(DOCKER_IMAGE)"
 
-docker-run: ## Run in Docker
-	@echo "Running in Docker..."
-	docker run -p 8080:8080 \
-		-v ~/.kube/config:/kubeconfig \
-		-e AGENTBOX_KUBECONFIG=/kubeconfig \
-		$(DOCKER_IMAGE)
+docker-run: docker-build ## Build and run Docker container
+	@echo "Running Docker container..."
+	docker run -p 8080:8080 $(DOCKER_IMAGE)
 
 docker-push: docker-build ## Build and push Docker image
 	@echo "Pushing Docker image..."
-	docker push $(DOCKER_IMAGE)
-	@echo "Docker image pushed: $(DOCKER_IMAGE)"
+	docker tag $(DOCKER_IMAGE) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE)
+	docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE)
 
 helm-lint: ## Lint Helm chart
 	@echo "Linting Helm chart..."
-	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
 	helm lint ./helm/agentbox
-	@echo "Helm chart linted"
 
-helm-template: ## Render Helm templates (dry-run)
-	@echo "Rendering Helm templates..."
-	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
+helm-template: ## Template Helm chart (dry-run)
+	@echo "Templating Helm chart..."
 	helm template agentbox ./helm/agentbox
-	@echo "Helm templates rendered"
 
 helm-install: ## Install Helm chart
 	@echo "Installing Helm chart..."
-	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
 	helm install agentbox ./helm/agentbox
-	@echo "Helm chart installed"
 
 helm-upgrade: ## Upgrade Helm chart
 	@echo "Upgrading Helm chart..."
-	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
 	helm upgrade agentbox ./helm/agentbox
-	@echo "Helm chart upgraded"
 
 helm-uninstall: ## Uninstall Helm chart
 	@echo "Uninstalling Helm chart..."
-	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
 	helm uninstall agentbox
-	@echo "Helm chart uninstalled"
 
 helm-package: ## Package Helm chart
 	@echo "Packaging Helm chart..."
-	@which helm > /dev/null || (echo "Helm is not installed. Install from https://helm.sh/docs/intro/install/" && exit 1)
 	helm package ./helm/agentbox
-	@echo "Helm chart packaged"
+	@echo "Helm chart packaged: agentbox-*.tgz"
 
-lint: ## Run linter
-	@echo "Running linter..."
-	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
-	golangci-lint run ./...
-	@echo "Lint complete"
+lint: ## Run linters
+	@echo "Running linters..."
+	gofmt -s -l .
+	go vet ./...
+	golangci-lint run
 
 fmt: ## Format code
 	@echo "Formatting code..."
-	go fmt ./...
-	@echo "Format complete"
+	gofmt -s -w .
+	@echo "Code formatted"
 
-vet: ## Run go vet
-	@echo "Running go vet..."
-	go vet ./...
-	@echo "Vet complete"
+deploy-dev: ## Deploy to development environment
+	@echo "Deploying to development..."
+	# Add deployment commands here
 
-tidy: ## Tidy go modules
-	@echo "Tidying modules..."
-	go mod tidy
-	@echo "Tidy complete"
-
-deps: ## Download dependencies
-	@echo "Downloading dependencies..."
-	go mod download
-	@echo "Dependencies downloaded"
-
-verify: fmt vet lint test-unit ## Run all verification steps
-	@echo "✅ All verification steps passed"
-
-deploy-dev: ## Deploy to dev environment
-	@echo "Deploying to dev environment..."
-	kubectl apply -k deploy/kubernetes/
-	@echo "Deployment complete"
-
-deploy-prod: ## Deploy to production
+deploy-prod: ## Deploy to production environment
 	@echo "Deploying to production..."
-	kubectl apply -k deploy/kubernetes/ -n production
-	@echo "Deployment complete"
+	# Add deployment commands here
 
-setup-dev: ## Setup development environment
+setup-dev: ## Set up development environment
 	@echo "Setting up development environment..."
-	./scripts/setup-dev.sh
+	@echo "Installing Go dependencies..."
+	go mod download
 	@echo "Development environment ready"
 
-install-tools: ## Install development tools
-	@echo "Installing development tools..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@echo "Tools installed"
+ui-install: ## Install UI dependencies
+	@echo "Installing UI dependencies..."
+	cd ui && npm install
 
-benchmark: ## Run benchmarks
-	@echo "Running benchmarks..."
-	go test -bench=. -benchmem ./...
-	@echo "Benchmarks complete"
+ui-dev: ## Start UI development server (port 3000)
+	@echo "Starting UI development server..."
+	cd ui && npm run dev
 
-.DEFAULT_GOAL := help
+ui-build: ## Build UI for production
+	@echo "Building UI..."
+	cd ui && npm run build
+	@echo "UI built: ui/dist/"

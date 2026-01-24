@@ -223,3 +223,70 @@ serviceMonitor:
   interval: 30s
   scrapeTimeout: 10s
   labels: {}
+
+# UI Configuration
+ui:
+  enabled: true
+  replicaCount: 1
+  
+  image:
+    repository: agentbox-ui
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  
+  # Enable Google OAuth in UI
+  googleOAuthEnabled: false
+  
+  # Pod security context
+  podSecurityContext:
+    fsGroup: 101
+    runAsNonRoot: true
+    runAsUser: 101
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 101
+  
+  # Resources
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  
+  # Service
+  service:
+    type: ClusterIP
+    port: 3000
+  
+  # Ingress
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: ui.agentbox.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity
+  affinity: {}
+  
+  # Pod annotations
+  podAnnotations: {}
