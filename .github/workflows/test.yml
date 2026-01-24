@@ -7,6 +7,8 @@ on:
       - 'feature/**'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+
+
 jobs:
   unit-tests:
     name: Unit Tests
@@ -114,6 +116,68 @@ jobs:
             exit 1
           fi
 
+  # UI Tests
+  ui-tests:
+    name: UI Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./ui
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload UI coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./ui/coverage/coverage-final.json
+          flags: ui
+          name: codecov-ui
+
+  # UI Lint
+  ui-lint:
+    name: UI Lint and TypeCheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./ui
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run TypeScript check
+        run: npm run typecheck
+
+      - name: Run ESLint
+        run: npm run lint
+
   docker-build-test:
     name: Docker Build Test
     runs-on: ubuntu-latest
@@ -158,3 +222,48 @@ jobs:
             whoami | grep -q agentbox && echo '✅ Non-root user' || (echo '❌ Wrong user' && exit 1)
             echo '✅ All Docker image tests passed'
           " || (echo "❌ Docker image test failed" && exit 1)
+
+  # UI Docker Build Test
+  ui-docker-build-test:
+    name: UI Docker Build Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify UI required files exist
+        run: |
+          if [ ! -f "ui/Dockerfile" ]; then
+            echo "❌ Error: ui/Dockerfile not found"
+            exit 1
+          fi
+          if [ ! -f "ui/package.json" ]; then
+            echo "❌ Error: ui/package.json not found"
+            exit 1
+          fi
+          echo "✅ UI required files present"
+
+      - name: Build UI Docker image (test)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ui
+          file: ./ui/Dockerfile
+          push: false
+          load: true
+          tags: agentbox-ui:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Test UI Docker image
+        run: |
+          echo "Testing UI Docker image structure..."
+          docker run --rm agentbox-ui:test sh -c "
+            echo 'Testing UI Docker image...'
+            test -f /usr/share/nginx/html/index.html && echo '✅ index.html exists' || (echo '❌ index.html missing' && exit 1)
+            test -d /usr/share/nginx/html/assets && echo '✅ assets directory exists' || (echo '❌ assets missing' && exit 1)
+            echo '✅ All UI Docker image tests passed'
+          " || (echo "❌ UI Docker image test failed" && exit 1)

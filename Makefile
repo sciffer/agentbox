@@ -1,4 +1,4 @@
-.PHONY: help build test test-unit test-integration test-coverage run clean docker-build docker-run docker-push helm-lint helm-template helm-install helm-upgrade helm-uninstall helm-package lint fmt deploy-dev deploy-prod setup-dev ui-install ui-dev ui-build ui-install ui-dev ui-build
+.PHONY: help build test test-unit test-integration test-coverage run clean docker-build docker-run docker-push helm-lint helm-template helm-install helm-upgrade helm-uninstall helm-package lint fmt deploy-dev deploy-prod setup-dev ui-install ui-dev ui-build ui-test ui-lint ui-typecheck
 
 APP_NAME := agentbox
 DOCKER_IMAGE := agentbox:latest
@@ -123,3 +123,19 @@ ui-build: ## Build UI for production
 	@echo "Building UI..."
 	cd ui && npm run build
 	@echo "UI built: ui/dist/"
+
+ui-test: ## Run UI tests
+	@echo "Running UI tests..."
+	cd ui && npm run test
+
+ui-lint: ## Run UI linting
+	@echo "Running UI lint..."
+	cd ui && npm run lint
+
+ui-typecheck: ## Run UI TypeScript check
+	@echo "Running UI typecheck..."
+	cd ui && npm run typecheck
+
+ui-test-coverage: ## Run UI tests with coverage
+	@echo "Running UI tests with coverage..."
+	cd ui && npm run test:coverage
