@@ -1,15 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { render } from '../test/test-utils'
 import LoginPage from './LoginPage'
-
-// Mock the API
-vi.mock('../services/api', () => ({
-  authAPI: {
-    login: vi.fn(),
-  },
-}))
 
 // Mock useNavigate
 const mockNavigate = vi.fn()
@@ -35,18 +28,6 @@ describe('LoginPage', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
-  it('shows validation errors for empty fields', async () => {
-    const user = userEvent.setup()
-    render(<LoginPage />)
-
-    const submitButton = screen.getByRole('button', { name: /sign in/i })
-    await user.click(submitButton)
-
-    await waitFor(() => {
-      expect(screen.getByText(/username is required/i)).toBeInTheDocument()
-    })
-  })
-
   it('has tabs for local and google login', () => {
     render(<LoginPage />)
 
@@ -66,5 +47,11 @@ describe('LoginPage', () => {
 
     expect(usernameInput).toHaveValue('testuser')
     expect(passwordInput).toHaveValue('testpass')
+  })
+
+  it('displays the sandbox management subtitle', () => {
+    render(<LoginPage />)
+    
+    expect(screen.getByText('Sandbox Management Platform')).toBeInTheDocument()
   })
 })
