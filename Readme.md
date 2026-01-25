@@ -404,6 +404,41 @@ Structured JSON logs with fields:
 - `message`
 - `duration_ms`
 
+## Web UI
+
+AgentBox includes a web-based management UI built with React + TypeScript.
+
+### Features
+
+- Dashboard with metrics and charts
+- Environment management (create, view, delete)
+- Interactive terminal (WebSocket)
+- Log streaming (SSE)
+- User management (admin)
+- API key management
+- Settings
+
+### Running the UI
+
+```bash
+# Development
+cd ui
+npm install
+npm run dev
+# UI available at http://localhost:3000
+
+# Production (Docker)
+docker build -t agentbox-ui:latest ./ui
+docker run -p 3000:3000 agentbox-ui:latest
+```
+
+### Ports
+
+| Service | Port | Description |
+|---------|------|-------------|
+| Backend API | 8080 | REST API + WebSocket |
+| UI | 3000 | Web interface |
+
 ## Development
 
 ### Building from Source
@@ -413,8 +448,11 @@ Structured JSON logs with fields:
 git clone https://github.com/yourorg/agentbox.git
 cd agentbox
 
-# Build
+# Build backend
 go build -o agentbox ./cmd/server
+
+# Build UI
+cd ui && npm install && npm run build
 
 # Run tests
 go test ./...
@@ -450,14 +488,43 @@ agentbox/
 ### Docker
 
 ```bash
+# Build and run backend
 docker build -t agentbox:latest .
 docker run -p 8080:8080 \
   -v ~/.kube/config:/kubeconfig \
   -e AGENTBOX_KUBECONFIG=/kubeconfig \
   agentbox:latest
+
+# Build and run UI
+docker build -t agentbox-ui:latest ./ui
+docker run -p 3000:3000 \
+  -e VITE_API_URL=http://localhost:8080/api/v1 \
+  agentbox-ui:latest
 ```
 
-### Kubernetes
+### Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+### Kubernetes (Helm)
+
+```bash
+# Install with Helm
+helm install agentbox ./helm/agentbox
+
+# With custom values
+helm install agentbox ./helm/agentbox \
+  --set ui.enabled=true \
+  --set ui.ingress.enabled=true \
+  --set ui.ingress.hosts[0].host=ui.example.com
+
+# Upgrade
+helm upgrade agentbox ./helm/agentbox
+```
+
+### Kubernetes (Manual)
 
 ```bash
 kubectl apply -f deploy/namespace.yaml
