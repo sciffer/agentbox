@@ -52,6 +52,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push Docker image
+        id: build-push
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -64,7 +65,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - name: Image digest
-        run: echo "Image pushed with digest: ${{ steps.meta.outputs.digest }}"
+        run: 'echo "Image pushed with digest: ${{ steps.build-push.outputs.digest }}"'
 
   package-helm:
     name: Package Helm Chart
