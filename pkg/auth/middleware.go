@@ -19,6 +19,23 @@ const UserContextKey ContextKey = "user"
 // Middleware provides authentication middleware for HTTP handlers
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check for X-API-Key header first (common pattern for API key auth)
+		apiKey := r.Header.Get("X-API-Key")
+		if apiKey != "" {
+			user, err := s.ValidateAPIKey(r.Context(), apiKey)
+			if err != nil {
+				s.logger.Debug("API key authentication failed", zap.Error(err))
+				s.respondUnauthorized(w, "invalid API key")
+				return
+			}
+
+			// API key valid, set user in context
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		// Check for Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			s.respondUnauthorized(w, "missing authorization header")
@@ -43,7 +60,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Try API key
+		// Try API key via Authorization header (Bearer <api-key>)
 		user, err = s.ValidateAPIKey(r.Context(), token)
 		if err != nil {
 			s.logger.Debug("authentication failed", zap.Error(err))
