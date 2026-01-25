@@ -46,6 +46,14 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Environment, CreateEnvironmentData, Toleration, IsolationConfig } from '../types'
 
+// Interface for toleration form entry
+interface TolerationEntry {
+  key: string
+  operator: 'Exists' | 'Equal'
+  value: string
+  effect: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute' | ''
+}
+
 const createEnvSchema = z.object({
   name: z.string().min(1, 'Name is required').regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, 'Must be lowercase alphanumeric with hyphens'),
   image: z.string().min(1, 'Image is required'),
@@ -55,8 +63,6 @@ const createEnvSchema = z.object({
   timeout: z.number().optional(),
   // Node selector as comma-separated key=value pairs
   nodeSelector: z.string().optional(),
-  // Tolerations as JSON string
-  tolerationsJson: z.string().optional(),
   // Isolation settings
   runtimeClass: z.string().optional(),
   allowInternet: z.boolean().optional(),
@@ -83,20 +89,6 @@ function parseNodeSelector(input: string | undefined): Record<string, string> | 
     }
   })
   return Object.keys(result).length > 0 ? result : undefined
-}
-
-// Helper to parse tolerations JSON
-function parseTolerations(input: string | undefined): Toleration[] | undefined {
-  if (!input?.trim()) return undefined
-  try {
-    const parsed = JSON.parse(input)
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed
-    }
-    return undefined
-  } catch {
-    return undefined
-  }
 }
 
 // Helper to parse comma-separated ports
@@ -127,6 +119,7 @@ function StatusChip({ status }: { status: string }) {
 
 export default function EnvironmentsPage() {
   const [open, setOpen] = useState(false)
+  const [tolerations, setTolerations] = useState<TolerationEntry[]>([])
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -147,6 +140,8 @@ export default function EnvironmentsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['environments'] })
       setOpen(false)
+      setTolerations([])
+      reset()
     },
   })
 
@@ -214,6 +209,16 @@ export default function EnvironmentsPage() {
       }
     }
 
+    // Convert tolerations state to API format
+    const tolerationsData: Toleration[] | undefined = tolerations.length > 0
+      ? tolerations.filter(t => t.key).map(t => ({
+          key: t.key,
+          operator: t.operator,
+          value: t.operator === 'Equal' ? t.value : undefined,
+          effect: t.effect || undefined,
+        }))
+      : undefined
+
     createMutation.mutate({
       name: formData.name,
       image: formData.image,
@@ -224,9 +229,24 @@ export default function EnvironmentsPage() {
       },
       timeout: formData.timeout,
       node_selector: parseNodeSelector(formData.nodeSelector),
-      tolerations: parseTolerations(formData.tolerationsJson),
+      tolerations: tolerationsData,
       isolation,
     })
+  }
+
+  // Toleration management functions
+  const addToleration = () => {
+    setTolerations([...tolerations, { key: '', operator: 'Equal', value: '', effect: '' }])
+  }
+
+  const removeToleration = (index: number) => {
+    setTolerations(tolerations.filter((_, i) => i !== index))
+  }
+
+  const updateToleration = (index: number, field: keyof TolerationEntry, value: string) => {
+    const newTolerations = [...tolerations]
+    newTolerations[index] = { ...newTolerations[index], [field]: value }
+    setTolerations(newTolerations)
   }
 
   const handleDelete = (id: string) => {
@@ -414,16 +434,69 @@ export default function EnvironmentsPage() {
                   helperText="Comma-separated key=value pairs (e.g., node-type=gpu,zone=us-east-1)"
                   sx={{ mb: 2 }}
                 />
-                <TextField
-                  margin="dense"
-                  label="Tolerations (JSON)"
-                  fullWidth
-                  multiline
-                  rows={3}
-                  placeholder='[{"key":"dedicated","operator":"Equal","value":"agents","effect":"NoSchedule"}]'
-                  {...register('tolerationsJson')}
-                  helperText="JSON array of Kubernetes tolerations"
-                />
+                
+                <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Tolerations</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+                  Allow scheduling on nodes with matching taints
+                </Typography>
+                
+                {tolerations.map((tol, index) => (
+                  <Box key={index} sx={{ display: 'flex', gap: 1, mb: 1, alignItems: 'center' }}>
+                    <TextField
+                      size="small"
+                      label="Key"
+                      value={tol.key}
+                      onChange={(e) => updateToleration(index, 'key', e.target.value)}
+                      sx={{ flex: 2 }}
+                      placeholder="dedicated"
+                    />
+                    <FormControl size="small" sx={{ flex: 1 }}>
+                      <InputLabel>Operator</InputLabel>
+                      <Select
+                        value={tol.operator}
+                        label="Operator"
+                        onChange={(e) => updateToleration(index, 'operator', e.target.value)}
+                      >
+                        <MenuItem value="Equal">Equal</MenuItem>
+                        <MenuItem value="Exists">Exists</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      size="small"
+                      label="Value"
+                      value={tol.value}
+                      onChange={(e) => updateToleration(index, 'value', e.target.value)}
+                      disabled={tol.operator === 'Exists'}
+                      sx={{ flex: 2 }}
+                      placeholder="agents"
+                    />
+                    <FormControl size="small" sx={{ flex: 1.5 }}>
+                      <InputLabel>Effect</InputLabel>
+                      <Select
+                        value={tol.effect}
+                        label="Effect"
+                        onChange={(e) => updateToleration(index, 'effect', e.target.value)}
+                      >
+                        <MenuItem value="">Any</MenuItem>
+                        <MenuItem value="NoSchedule">NoSchedule</MenuItem>
+                        <MenuItem value="PreferNoSchedule">PreferNoSchedule</MenuItem>
+                        <MenuItem value="NoExecute">NoExecute</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <IconButton size="small" onClick={() => removeToleration(index)} color="error">
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                ))}
+                
+                <Button
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={addToleration}
+                  sx={{ mt: 1 }}
+                >
+                  Add Toleration
+                </Button>
               </AccordionDetails>
             </Accordion>
 
@@ -601,7 +674,7 @@ export default function EnvironmentsPage() {
 
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => { setOpen(false); reset() }}>Cancel</Button>
+            <Button onClick={() => { setOpen(false); reset(); setTolerations([]) }}>Cancel</Button>
             <Button type="submit" variant="contained" disabled={createMutation.isPending}>
               {createMutation.isPending ? 'Creating...' : 'Create'}
             </Button>
