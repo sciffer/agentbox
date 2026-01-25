@@ -1,21 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 
-// Simple unit tests for API functions - mock the entire module
 describe('API Service', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
   describe('API URL configuration', () => {
-    it('should have default API URL', () => {
-      // Test that the API client would be created with proper defaults
+    it('should have correct default API URL format', () => {
       const defaultUrl = 'http://localhost:8080/api/v1'
       expect(defaultUrl).toContain('/api/v1')
+      expect(defaultUrl).toContain('localhost')
     })
   })
 
   describe('API endpoint paths', () => {
-    it('should have correct auth endpoints', () => {
+    it('should construct correct auth endpoints', () => {
       const endpoints = {
         login: '/auth/login',
         logout: '/auth/logout',
@@ -29,7 +24,7 @@ describe('API Service', () => {
       expect(endpoints.changePassword).toBe('/auth/change-password')
     })
 
-    it('should have correct environment endpoints', () => {
+    it('should construct correct environment endpoints', () => {
       const envId = 'env-123'
       const endpoints = {
         list: '/environments',
@@ -43,9 +38,10 @@ describe('API Service', () => {
       expect(endpoints.list).toBe('/environments')
       expect(endpoints.get).toBe('/environments/env-123')
       expect(endpoints.exec).toBe('/environments/env-123/exec')
+      expect(endpoints.logs).toBe('/environments/env-123/logs')
     })
 
-    it('should have correct user endpoints', () => {
+    it('should construct correct user endpoints', () => {
       const userId = 'user-123'
       const endpoints = {
         list: '/users',
@@ -55,9 +51,10 @@ describe('API Service', () => {
       
       expect(endpoints.list).toBe('/users')
       expect(endpoints.get).toBe('/users/user-123')
+      expect(endpoints.create).toBe('/users')
     })
 
-    it('should have correct API key endpoints', () => {
+    it('should construct correct API key endpoints', () => {
       const keyId = 'key-123'
       const endpoints = {
         list: '/api-keys',
@@ -66,10 +63,11 @@ describe('API Service', () => {
       }
       
       expect(endpoints.list).toBe('/api-keys')
+      expect(endpoints.create).toBe('/api-keys')
       expect(endpoints.revoke).toBe('/api-keys/key-123')
     })
 
-    it('should have correct metrics endpoints', () => {
+    it('should construct correct metrics endpoints', () => {
       const envId = 'env-123'
       const endpoints = {
         global: '/metrics/global',

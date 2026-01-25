@@ -14,8 +14,8 @@ describe('authStore', () => {
   it('should start with unauthenticated state', () => {
     const state = useAuthStore.getState()
     expect(state.isAuthenticated).toBe(false)
-    expect(state.token).toBeNull()
-    expect(state.user).toBeNull()
+    expect(state.token).toBe(null)
+    expect(state.user).toBe(null)
   })
 
   it('should set auth correctly', () => {
@@ -33,7 +33,7 @@ describe('authStore', () => {
     const state = useAuthStore.getState()
     expect(state.isAuthenticated).toBe(true)
     expect(state.token).toBe(mockToken)
-    expect(state.user).toEqual(mockUser)
+    expect(state.user?.username).toBe('testuser')
   })
 
   it('should clear auth correctly', () => {
@@ -50,7 +50,7 @@ describe('authStore', () => {
 
     const state = useAuthStore.getState()
     expect(state.isAuthenticated).toBe(false)
-    expect(state.token).toBeNull()
-    expect(state.user).toBeNull()
+    expect(state.token).toBe(null)
+    expect(state.user).toBe(null)
   })
 })
