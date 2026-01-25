@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -99,4 +100,106 @@ func (c *Client) GetClusterCapacity(ctx context.Context) (int, string, string, e
 	memoryStr := fmt.Sprintf("%dGi", memoryGi)
 
 	return totalNodes, cpuStr, memoryStr, nil
+}
+
+// PodMetrics represents resource usage for a pod
+type PodMetrics struct {
+	CPUMillicores int64 // CPU usage in millicores
+	MemoryBytes   int64 // Memory usage in bytes
+}
+
+// GetPodMetrics retrieves CPU and memory metrics for a pod using metrics-server API
+func (c *Client) GetPodMetrics(ctx context.Context, namespace, podName string) (*PodMetrics, error) {
+	// Use the metrics.k8s.io API
+	path := fmt.Sprintf("/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods/%s", namespace, podName)
+
+	result := c.clientset.RESTClient().Get().
+		AbsPath(path).
+		Do(ctx)
+
+	if err := result.Error(); err != nil {
+		return nil, fmt.Errorf("failed to get pod metrics: %w", err)
+	}
+
+	raw, err := result.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read metrics response: %w", err)
+	}
+
+	var metricsResult struct {
+		Containers []struct {
+			Name  string `json:"name"`
+			Usage struct {
+				CPU    string `json:"cpu"`
+				Memory string `json:"memory"`
+			} `json:"usage"`
+		} `json:"containers"`
+	}
+
+	if err := json.Unmarshal(raw, &metricsResult); err != nil {
+		return nil, fmt.Errorf("failed to parse metrics: %w", err)
+	}
+
+	metrics := &PodMetrics{}
+	for _, container := range metricsResult.Containers {
+		// Parse CPU (format: "123456n" for nanocores)
+		cpuNano := parseCPUNano(container.Usage.CPU)
+		metrics.CPUMillicores += cpuNano / 1_000_000 // Convert nanocores to millicores
+
+		// Parse memory (format: "123456Ki" or "123456789")
+		memBytes := parseMemoryBytes(container.Usage.Memory)
+		metrics.MemoryBytes += memBytes
+	}
+
+	return metrics, nil
+}
+
+// parseCPUNano parses CPU string (e.g., "123456789n") to nanocores
+func parseCPUNano(cpu string) int64 {
+	if cpu == "" {
+		return 0
+	}
+
+	// Remove 'n' suffix if present (nanocores)
+	if cpu[len(cpu)-1] == 'n' {
+		cpu = cpu[:len(cpu)-1]
+	}
+
+	var value int64
+	_, _ = fmt.Sscanf(cpu, "%d", &value) //nolint:errcheck
+	return value
+}
+
+// parseMemoryBytes parses memory string to bytes
+func parseMemoryBytes(memory string) int64 {
+	if memory == "" {
+		return 0
+	}
+
+	var value int64
+	var unit string
+
+	// Try to parse with unit suffix
+	n, _ := fmt.Sscanf(memory, "%d%s", &value, &unit) //nolint:errcheck
+	if n == 1 {
+		return value
+	}
+
+	// Apply unit multiplier
+	switch unit {
+	case "Ki":
+		return value * 1024
+	case "Mi":
+		return value * 1024 * 1024
+	case "Gi":
+		return value * 1024 * 1024 * 1024
+	case "K":
+		return value * 1000
+	case "M":
+		return value * 1000 * 1000
+	case "G":
+		return value * 1000 * 1000 * 1000
+	default:
+		return value
+	}
 }

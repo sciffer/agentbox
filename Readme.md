@@ -305,9 +305,87 @@ Creates a new isolated execution environment.
   "labels": {
     "team": "ai-research",
     "project": "agent-framework"
+  },
+  "node_selector": {
+    "kubernetes.io/arch": "amd64",
+    "node-type": "compute"
+  },
+  "tolerations": [
+    {
+      "key": "dedicated",
+      "operator": "Equal",
+      "value": "agents",
+      "effect": "NoSchedule"
+    }
+  ],
+  "isolation": {
+    "runtime_class": "gvisor",
+    "network_policy": {
+      "allow_internet": false,
+      "allowed_egress_cidrs": ["10.0.0.0/8"],
+      "allowed_ingress_ports": [8080],
+      "allow_cluster_internal": false
+    },
+    "security_context": {
+      "run_as_non_root": true,
+      "read_only_root_filesystem": true,
+      "allow_privilege_escalation": false
+    }
   }
 }
 ```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Name of the environment (lowercase alphanumeric with hyphens, max 63 chars) |
+| `image` | string | Yes | Container image to use |
+| `resources` | object | Yes | Resource limits (cpu, memory, storage) |
+| `timeout` | int | No | Max runtime in seconds (default: 3600) |
+| `env` | object | No | Environment variables to set |
+| `command` | array | No | Command to run (default: sleep infinity) |
+| `labels` | object | No | Labels to apply to resources |
+| `node_selector` | object | No | Kubernetes node selector for pod scheduling |
+| `tolerations` | array | No | Kubernetes tolerations for scheduling on tainted nodes |
+| `isolation` | object | No | Isolation and security settings |
+
+**Toleration Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | string | Taint key to match |
+| `operator` | string | "Equal" or "Exists" |
+| `value` | string | Taint value to match (only for "Equal" operator) |
+| `effect` | string | "NoSchedule", "PreferNoSchedule", or "NoExecute" |
+| `tolerationSeconds` | int | Seconds to tolerate (only for "NoExecute") |
+
+**Isolation Configuration:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runtime_class` | string | Container runtime class (e.g., "gvisor", "kata", "runc"). Empty uses cluster default |
+| `network_policy` | object | Network isolation settings (see below) |
+| `security_context` | object | Pod security settings (see below) |
+
+**Network Policy Fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allow_internet` | bool | false | Allow full outbound internet access |
+| `allowed_egress_cidrs` | array | [] | List of allowed outbound IP ranges (e.g., ["10.0.0.0/8"]) |
+| `allowed_ingress_ports` | array | [] | List of ports to allow inbound traffic (e.g., [8080, 443]) |
+| `allow_cluster_internal` | bool | false | Allow traffic to/from other pods in the cluster |
+
+**Security Context Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `run_as_user` | int | UID to run the container as |
+| `run_as_group` | int | GID to run the container as |
+| `run_as_non_root` | bool | Enforce running as non-root user |
+| `read_only_root_filesystem` | bool | Mount root filesystem as read-only |
+| `allow_privilege_escalation` | bool | Allow processes to gain more privileges |
 
 **Response:** `201 Created`
 ```json

@@ -9,6 +9,35 @@ export interface User {
   last_login?: string
 }
 
+export interface Toleration {
+  key?: string
+  operator?: 'Exists' | 'Equal'
+  value?: string
+  effect?: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute'
+  tolerationSeconds?: number
+}
+
+export interface NetworkPolicyConfig {
+  allow_internet?: boolean
+  allowed_egress_cidrs?: string[]
+  allowed_ingress_ports?: number[]
+  allow_cluster_internal?: boolean
+}
+
+export interface SecurityContextConfig {
+  run_as_user?: number
+  run_as_group?: number
+  run_as_non_root?: boolean
+  read_only_root_filesystem?: boolean
+  allow_privilege_escalation?: boolean
+}
+
+export interface IsolationConfig {
+  runtime_class?: string  // e.g., "gvisor", "kata", "runc"
+  network_policy?: NetworkPolicyConfig
+  security_context?: SecurityContextConfig
+}
+
 export interface Environment {
   id: string
   name: string
@@ -22,6 +51,9 @@ export interface Environment {
   created_at: string
   started_at?: string
   terminated_at?: string
+  node_selector?: Record<string, string>
+  tolerations?: Toleration[]
+  isolation?: IsolationConfig
 }
 
 export interface EnvironmentPermission {
@@ -74,6 +106,13 @@ export interface CreateEnvironmentData {
     memory: string
     storage: string
   }
+  labels?: Record<string, string>
+  env?: Record<string, string>
+  command?: string[]
+  timeout?: number
+  node_selector?: Record<string, string>
+  tolerations?: Toleration[]
+  isolation?: IsolationConfig
 }
 
 export interface CreateUserData {

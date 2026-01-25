@@ -119,6 +119,11 @@ func (m *MockK8sClient) CreateResourceQuota(ctx context.Context, namespace, cpu,
 
 // CreateNetworkPolicy creates a mock network policy
 func (m *MockK8sClient) CreateNetworkPolicy(ctx context.Context, namespace string) error {
+	return m.CreateNetworkPolicyWithConfig(ctx, namespace, nil)
+}
+
+// CreateNetworkPolicyWithConfig creates a mock network policy with config
+func (m *MockK8sClient) CreateNetworkPolicyWithConfig(ctx context.Context, namespace string, config *k8s.NetworkPolicyConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

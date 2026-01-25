@@ -14,18 +14,39 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
+// Toleration represents a Kubernetes toleration
+type Toleration struct {
+	Key               string
+	Operator          string // "Exists" or "Equal"
+	Value             string
+	Effect            string // "NoSchedule", "PreferNoSchedule", "NoExecute"
+	TolerationSeconds *int64
+}
+
+// SecurityContext holds pod security context settings
+type SecurityContext struct {
+	RunAsUser                *int64
+	RunAsGroup               *int64
+	RunAsNonRoot             *bool
+	ReadOnlyRootFilesystem   *bool
+	AllowPrivilegeEscalation *bool
+}
+
 // PodSpec holds pod creation parameters
 type PodSpec struct {
-	Name         string
-	Namespace    string
-	Image        string
-	Command      []string
-	Env          map[string]string
-	CPU          string
-	Memory       string
-	Storage      string
-	RuntimeClass string
-	Labels       map[string]string
+	Name            string
+	Namespace       string
+	Image           string
+	Command         []string
+	Env             map[string]string
+	CPU             string
+	Memory          string
+	Storage         string
+	RuntimeClass    string
+	Labels          map[string]string
+	NodeSelector    map[string]string
+	Tolerations     []Toleration
+	SecurityContext *SecurityContext
 }
 
 // CreatePod creates a new pod
@@ -57,6 +78,47 @@ func (c *Client) CreatePod(ctx context.Context, spec *PodSpec) error {
 		})
 	}
 
+	// Convert tolerations to Kubernetes format
+	var tolerations []corev1.Toleration
+	for _, t := range spec.Tolerations {
+		toleration := corev1.Toleration{
+			Key:   t.Key,
+			Value: t.Value,
+		}
+		// Set operator (default to "Equal" if not specified)
+		switch t.Operator {
+		case "Exists":
+			toleration.Operator = corev1.TolerationOpExists
+		default:
+			toleration.Operator = corev1.TolerationOpEqual
+		}
+		// Set effect
+		switch t.Effect {
+		case "NoSchedule":
+			toleration.Effect = corev1.TaintEffectNoSchedule
+		case "PreferNoSchedule":
+			toleration.Effect = corev1.TaintEffectPreferNoSchedule
+		case "NoExecute":
+			toleration.Effect = corev1.TaintEffectNoExecute
+		}
+		if t.TolerationSeconds != nil {
+			toleration.TolerationSeconds = t.TolerationSeconds
+		}
+		tolerations = append(tolerations, toleration)
+	}
+
+	// Build container security context
+	var containerSecurityContext *corev1.SecurityContext
+	if spec.SecurityContext != nil {
+		containerSecurityContext = &corev1.SecurityContext{
+			RunAsUser:                spec.SecurityContext.RunAsUser,
+			RunAsGroup:               spec.SecurityContext.RunAsGroup,
+			RunAsNonRoot:             spec.SecurityContext.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   spec.SecurityContext.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: spec.SecurityContext.AllowPrivilegeEscalation,
+		}
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.Name,
@@ -71,12 +133,15 @@ func (c *Client) CreatePod(ctx context.Context, spec *PodSpec) error {
 				}
 				return nil
 			}(),
+			NodeSelector: spec.NodeSelector,
+			Tolerations:  tolerations,
 			Containers: []corev1.Container{
 				{
-					Name:    "main",
-					Image:   spec.Image,
-					Command: spec.Command,
-					Env:     envVars,
+					Name:            "main",
+					Image:           spec.Image,
+					Command:         spec.Command,
+					Env:             envVars,
+					SecurityContext: containerSecurityContext,
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:              resource.MustParse(spec.CPU),
@@ -140,6 +205,9 @@ func (c *Client) WaitForPodRunning(ctx context.Context, namespace, name string) 
 	}
 	defer watch.Stop()
 
+	var lastPodStatus corev1.PodPhase
+	var lastContainerStatus string
+
 	for {
 		select {
 		case event := <-watch.ResultChan():
@@ -152,16 +220,45 @@ func (c *Client) WaitForPodRunning(ctx context.Context, namespace, name string) 
 				continue
 			}
 
+			lastPodStatus = pod.Status.Phase
+
 			if pod.Status.Phase == corev1.PodRunning {
 				return nil
 			}
 
 			if pod.Status.Phase == corev1.PodFailed {
-				return fmt.Errorf("pod failed to start")
+				reason := "unknown"
+				if len(pod.Status.ContainerStatuses) > 0 {
+					cs := pod.Status.ContainerStatuses[0]
+					if cs.State.Terminated != nil {
+						reason = cs.State.Terminated.Reason
+						if cs.State.Terminated.Message != "" {
+							reason += ": " + cs.State.Terminated.Message
+						}
+					}
+				}
+				return fmt.Errorf("pod failed to start: %s", reason)
+			}
+
+			// Track container status for better error messages
+			if len(pod.Status.ContainerStatuses) > 0 {
+				cs := pod.Status.ContainerStatuses[0]
+				if cs.State.Waiting != nil {
+					lastContainerStatus = cs.State.Waiting.Reason
+					if cs.State.Waiting.Message != "" {
+						lastContainerStatus += ": " + cs.State.Waiting.Message
+					}
+				}
 			}
 
 		case <-ctx.Done():
-			return ctx.Err()
+			// Provide more context about why the pod didn't start
+			errMsg := fmt.Sprintf("timeout waiting for pod to start (last status: %s", lastPodStatus)
+			if lastContainerStatus != "" {
+				errMsg += fmt.Sprintf(", container: %s", lastContainerStatus)
+			}
+			errMsg += ")"
+			return fmt.Errorf("%s: %w", errMsg, ctx.Err())
 		}
 	}
 }

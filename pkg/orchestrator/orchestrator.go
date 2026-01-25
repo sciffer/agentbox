@@ -46,19 +46,22 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 	namespace := o.generateNamespace(envID)
 
 	env := &models.Environment{
-		ID:        envID,
-		Name:      req.Name,
-		Status:    models.StatusPending,
-		Image:     req.Image,
-		CreatedAt: time.Now(),
-		Resources: req.Resources,
-		Namespace: namespace,
-		Env:       req.Env,
-		Command:   req.Command,
-		Labels:    req.Labels,
-		Timeout:   req.Timeout,
-		UserID:    userID,
-		Endpoint:  fmt.Sprintf("ws://localhost:8080/api/v1/environments/%s/attach", envID),
+		ID:           envID,
+		Name:         req.Name,
+		Status:       models.StatusPending,
+		Image:        req.Image,
+		CreatedAt:    time.Now(),
+		Resources:    req.Resources,
+		Namespace:    namespace,
+		Env:          req.Env,
+		Command:      req.Command,
+		Labels:       req.Labels,
+		Timeout:      req.Timeout,
+		UserID:       userID,
+		NodeSelector: req.NodeSelector,
+		Tolerations:  req.Tolerations,
+		Isolation:    req.Isolation,
+		Endpoint:     fmt.Sprintf("ws://localhost:8080/api/v1/environments/%s/attach", envID),
 	}
 
 	// Store environment in memory
@@ -109,6 +112,9 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 	envResources := env.Resources
 	envEnvVars := env.Env
 	envLabels := env.Labels
+	envNodeSelector := env.NodeSelector
+	envTolerations := env.Tolerations
+	envIsolation := env.Isolation
 
 	// Create namespace
 	labels := map[string]string{
@@ -135,8 +141,8 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 		return fmt.Errorf("failed to create resource quota: %w", err)
 	}
 
-	// Apply network policy (isolation)
-	if err := o.applyNetworkPolicy(ctx, envNamespace); err != nil {
+	// Apply network policy with isolation config
+	if err := o.applyNetworkPolicyWithConfig(ctx, envNamespace, envIsolation); err != nil {
 		return fmt.Errorf("failed to apply network policy: %w", err)
 	}
 
@@ -147,17 +153,50 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 		command = []string{"/bin/sh", "-c", "sleep infinity"}
 	}
 
+	// Convert model tolerations to k8s tolerations
+	var k8sTolerations []k8s.Toleration
+	for _, t := range envTolerations {
+		k8sTolerations = append(k8sTolerations, k8s.Toleration{
+			Key:               t.Key,
+			Operator:          t.Operator,
+			Value:             t.Value,
+			Effect:            t.Effect,
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+
+	// Determine runtime class (per-environment overrides global)
+	runtimeClass := o.config.Kubernetes.RuntimeClass
+	if envIsolation != nil && envIsolation.RuntimeClass != "" {
+		runtimeClass = envIsolation.RuntimeClass
+	}
+
+	// Convert security context if provided
+	var securityContext *k8s.SecurityContext
+	if envIsolation != nil && envIsolation.SecurityContext != nil {
+		securityContext = &k8s.SecurityContext{
+			RunAsUser:                envIsolation.SecurityContext.RunAsUser,
+			RunAsGroup:               envIsolation.SecurityContext.RunAsGroup,
+			RunAsNonRoot:             envIsolation.SecurityContext.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   envIsolation.SecurityContext.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: envIsolation.SecurityContext.AllowPrivilegeEscalation,
+		}
+	}
+
 	podSpec := &k8s.PodSpec{
-		Name:         podName,
-		Namespace:    envNamespace,
-		Image:        envImage,
-		Command:      command,
-		Env:          envEnvVars,
-		CPU:          envResources.CPU,
-		Memory:       envResources.Memory,
-		Storage:      envResources.Storage,
-		RuntimeClass: o.config.Kubernetes.RuntimeClass,
-		Labels:       labels,
+		Name:            podName,
+		Namespace:       envNamespace,
+		Image:           envImage,
+		Command:         command,
+		Env:             envEnvVars,
+		CPU:             envResources.CPU,
+		Memory:          envResources.Memory,
+		Storage:         envResources.Storage,
+		RuntimeClass:    runtimeClass,
+		Labels:          labels,
+		NodeSelector:    envNodeSelector,
+		Tolerations:     k8sTolerations,
+		SecurityContext: securityContext,
 	}
 
 	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
@@ -519,8 +558,21 @@ func matchesLabelSelector(envLabels map[string]string, selectorStr string) bool 
 	return selector.Matches(labelSet)
 }
 
-func (o *Orchestrator) applyNetworkPolicy(ctx context.Context, namespace string) error {
-	return o.k8sClient.CreateNetworkPolicy(ctx, namespace)
+func (o *Orchestrator) applyNetworkPolicyWithConfig(ctx context.Context, namespace string, isolation *models.IsolationConfig) error {
+	// If no isolation config, use default restrictive policy
+	if isolation == nil || isolation.NetworkPolicy == nil {
+		return o.k8sClient.CreateNetworkPolicy(ctx, namespace)
+	}
+
+	// Convert model config to k8s config
+	npConfig := &k8s.NetworkPolicyConfig{
+		AllowInternet:        isolation.NetworkPolicy.AllowInternet,
+		AllowedEgressCIDRs:   isolation.NetworkPolicy.AllowedEgressCIDRs,
+		AllowedIngressPorts:  isolation.NetworkPolicy.AllowedIngressPorts,
+		AllowClusterInternal: isolation.NetworkPolicy.AllowClusterInternal,
+	}
+
+	return o.k8sClient.CreateNetworkPolicyWithConfig(ctx, namespace, npConfig)
 }
 
 func (o *Orchestrator) executeInPod(ctx context.Context, namespace, podName string, command []string) (stdout, stderr string, exitCode int, err error) {

@@ -85,6 +85,131 @@ func (v *Validator) ValidateCreateRequest(req *models.CreateEnvironmentRequest) 
 		}
 	}
 
+	// Validate node selector
+	for k, v := range req.NodeSelector {
+		if k == "" {
+			return fmt.Errorf("node selector key cannot be empty")
+		}
+		if len(k) > 253 {
+			return fmt.Errorf("node selector key must be 253 characters or less")
+		}
+		if len(v) > 63 {
+			return fmt.Errorf("node selector value must be 63 characters or less")
+		}
+	}
+
+	// Validate tolerations
+	for i, t := range req.Tolerations {
+		if err := validateToleration(&t, i); err != nil {
+			return err
+		}
+	}
+
+	// Validate isolation config
+	if req.Isolation != nil {
+		if err := validateIsolationConfig(req.Isolation); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateIsolationConfig validates isolation configuration
+func validateIsolationConfig(isolation *models.IsolationConfig) error {
+	// Validate runtime class (if specified)
+	if isolation.RuntimeClass != "" {
+		// Runtime class names follow DNS-1123 label convention
+		if !nameRegex.MatchString(isolation.RuntimeClass) {
+			return fmt.Errorf("isolation.runtime_class must be lowercase alphanumeric with hyphens")
+		}
+		if len(isolation.RuntimeClass) > 63 {
+			return fmt.Errorf("isolation.runtime_class must be 63 characters or less")
+		}
+	}
+
+	// Validate network policy config
+	if isolation.NetworkPolicy != nil {
+		if err := validateNetworkPolicyConfig(isolation.NetworkPolicy); err != nil {
+			return err
+		}
+	}
+
+	// Validate security context config
+	if isolation.SecurityContext != nil {
+		if err := validateSecurityContextConfig(isolation.SecurityContext); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateNetworkPolicyConfig validates network policy configuration
+func validateNetworkPolicyConfig(np *models.NetworkPolicyConfig) error {
+	// Validate CIDR blocks
+	cidrRegex := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$`)
+	for i, cidr := range np.AllowedEgressCIDRs {
+		if cidr == "" {
+			continue
+		}
+		if !cidrRegex.MatchString(cidr) {
+			return fmt.Errorf("isolation.network_policy.allowed_egress_cidrs[%d]: invalid CIDR format '%s'", i, cidr)
+		}
+	}
+
+	// Validate ports
+	for i, port := range np.AllowedIngressPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("isolation.network_policy.allowed_ingress_ports[%d]: port must be between 1 and 65535", i)
+		}
+	}
+
+	return nil
+}
+
+// validateSecurityContextConfig validates security context configuration
+func validateSecurityContextConfig(sc *models.SecurityContextConfig) error {
+	// Validate run_as_user (must be non-negative if specified)
+	if sc.RunAsUser != nil && *sc.RunAsUser < 0 {
+		return fmt.Errorf("isolation.security_context.run_as_user must be non-negative")
+	}
+
+	// Validate run_as_group (must be non-negative if specified)
+	if sc.RunAsGroup != nil && *sc.RunAsGroup < 0 {
+		return fmt.Errorf("isolation.security_context.run_as_group must be non-negative")
+	}
+
+	return nil
+}
+
+// validateToleration validates a single toleration
+func validateToleration(t *models.Toleration, index int) error {
+	// Validate operator
+	if t.Operator != "" && t.Operator != "Exists" && t.Operator != "Equal" {
+		return fmt.Errorf("toleration[%d]: operator must be 'Exists' or 'Equal'", index)
+	}
+
+	// Validate effect
+	if t.Effect != "" && t.Effect != "NoSchedule" && t.Effect != "PreferNoSchedule" && t.Effect != "NoExecute" {
+		return fmt.Errorf("toleration[%d]: effect must be 'NoSchedule', 'PreferNoSchedule', or 'NoExecute'", index)
+	}
+
+	// If operator is "Exists", value should be empty
+	if t.Operator == "Exists" && t.Value != "" {
+		return fmt.Errorf("toleration[%d]: value must be empty when operator is 'Exists'", index)
+	}
+
+	// tolerationSeconds only makes sense with NoExecute effect
+	if t.TolerationSeconds != nil && t.Effect != "NoExecute" {
+		return fmt.Errorf("toleration[%d]: tolerationSeconds can only be set when effect is 'NoExecute'", index)
+	}
+
+	// Validate key length
+	if len(t.Key) > 253 {
+		return fmt.Errorf("toleration[%d]: key must be 253 characters or less", index)
+	}
+
 	return nil
 }
 

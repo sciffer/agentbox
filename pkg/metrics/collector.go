@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/sciffer/agentbox/pkg/database"
+	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 )
 
@@ -18,6 +19,7 @@ import (
 type Collector struct {
 	db           *database.DB
 	orchestrator *orchestrator.Orchestrator
+	k8sClient    *k8s.Client
 	interval     time.Duration
 	enabled      bool
 	stopChan     chan struct{}
@@ -26,7 +28,7 @@ type Collector struct {
 }
 
 // NewCollector creates a new metrics collector
-func NewCollector(db *database.DB, orch *orchestrator.Orchestrator, logger *zap.Logger) *Collector {
+func NewCollector(db *database.DB, orch *orchestrator.Orchestrator, k8sClient *k8s.Client, logger *zap.Logger) *Collector {
 	enabled := os.Getenv("AGENTBOX_METRICS_ENABLED") != "false"
 	intervalStr := os.Getenv("AGENTBOX_METRICS_COLLECTION_INTERVAL")
 	interval := 30 * time.Second
@@ -39,6 +41,7 @@ func NewCollector(db *database.DB, orch *orchestrator.Orchestrator, logger *zap.
 	return &Collector{
 		db:           db,
 		orchestrator: orch,
+		k8sClient:    k8sClient,
 		interval:     interval,
 		enabled:      enabled,
 		stopChan:     make(chan struct{}),
@@ -107,15 +110,29 @@ func (c *Collector) collectGlobalMetrics(ctx context.Context) {
 		return
 	}
 
-	// Count running environments
+	// Count running environments and aggregate metrics
 	runningCount := 0
-	var totalCPU, totalMemory float64
+	var totalCPU float64    // in millicores
+	var totalMemory float64 // in bytes
 	var startTimes []time.Duration
 
 	for i := range envs.Environments {
 		env := &envs.Environments[i]
 		if env.Status == "running" {
 			runningCount++
+
+			// Get actual metrics from Kubernetes
+			if c.k8sClient != nil {
+				metrics, err := c.k8sClient.GetPodMetrics(ctx, env.Namespace, "main")
+				if err != nil {
+					c.logger.Debug("failed to get pod metrics",
+						zap.String("environment_id", env.ID),
+						zap.Error(err))
+				} else {
+					totalCPU += float64(metrics.CPUMillicores)
+					totalMemory += float64(metrics.MemoryBytes)
+				}
+			}
 		}
 
 		// Calculate average start time (if started_at is available)
@@ -142,15 +159,14 @@ func (c *Collector) collectGlobalMetrics(ctx context.Context) {
 		}
 	}
 
-	// TODO: Collect actual CPU and memory usage from Kubernetes
-	// For now, store placeholder values
-	if runningCount > 0 {
-		if err := c.storeMetric(ctx, "", "cpu_usage", totalCPU); err != nil {
-			c.logger.Warn("failed to store cpu_usage metric", zap.Error(err))
-		}
-		if err := c.storeMetric(ctx, "", "memory_usage", totalMemory); err != nil {
-			c.logger.Warn("failed to store memory_usage metric", zap.Error(err))
-		}
+	// Store aggregated CPU and memory usage
+	if err := c.storeMetric(ctx, "", "cpu_usage", totalCPU); err != nil {
+		c.logger.Warn("failed to store cpu_usage metric", zap.Error(err))
+	}
+	// Convert memory to MiB for storage
+	memoryMiB := totalMemory / (1024 * 1024)
+	if err := c.storeMetric(ctx, "", "memory_usage", memoryMiB); err != nil {
+		c.logger.Warn("failed to store memory_usage metric", zap.Error(err))
 	}
 }
 
@@ -171,12 +187,24 @@ func (c *Collector) collectEnvironmentMetrics(ctx context.Context) {
 				c.logger.Warn("failed to store env running_sandboxes metric", zap.Error(err))
 			}
 
-			// TODO: Get actual CPU/memory usage from Kubernetes
-			// For now, store placeholder values
-			if err := c.storeMetric(ctx, env.ID, "cpu_usage", 0.0); err != nil {
+			// Get actual CPU/memory usage from Kubernetes
+			var cpuUsage, memoryUsage float64
+			if c.k8sClient != nil {
+				metrics, err := c.k8sClient.GetPodMetrics(ctx, env.Namespace, "main")
+				if err != nil {
+					c.logger.Debug("failed to get pod metrics for environment",
+						zap.String("environment_id", env.ID),
+						zap.Error(err))
+				} else {
+					cpuUsage = float64(metrics.CPUMillicores)
+					memoryUsage = float64(metrics.MemoryBytes) / (1024 * 1024) // Convert to MiB
+				}
+			}
+
+			if err := c.storeMetric(ctx, env.ID, "cpu_usage", cpuUsage); err != nil {
 				c.logger.Warn("failed to store env cpu_usage metric", zap.Error(err))
 			}
-			if err := c.storeMetric(ctx, env.ID, "memory_usage", 0.0); err != nil {
+			if err := c.storeMetric(ctx, env.ID, "memory_usage", memoryUsage); err != nil {
 				c.logger.Warn("failed to store env memory_usage metric", zap.Error(err))
 			}
 

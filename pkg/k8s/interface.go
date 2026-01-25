@@ -18,6 +18,7 @@ type ClientInterface interface {
 	NamespaceExists(ctx context.Context, name string) (bool, error)
 	CreateResourceQuota(ctx context.Context, namespace, cpu, memory, storage string) error
 	CreateNetworkPolicy(ctx context.Context, namespace string) error
+	CreateNetworkPolicyWithConfig(ctx context.Context, namespace string, config *NetworkPolicyConfig) error
 	CreatePod(ctx context.Context, spec *PodSpec) error
 	GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error)
 	DeletePod(ctx context.Context, namespace, name string, force bool) error

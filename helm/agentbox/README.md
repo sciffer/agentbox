@@ -178,6 +178,22 @@ ingress:
 | `serviceAccount.name` | Service account name | `""` (auto-generated) |
 | `rbac.create` | Create RBAC resources | `true` |
 
+#### Required Cluster Permissions
+
+AgentBox requires the following cluster-level permissions for sandbox orchestration and isolation controls:
+
+| Resource | API Group | Permissions | Purpose |
+|----------|-----------|-------------|---------|
+| `nodes` | core | get, list, watch | Cluster capacity monitoring |
+| `namespaces` | core | create, delete, get, list, watch | Sandbox namespace management |
+| `pods`, `pods/exec`, `pods/log`, `pods/attach` | core | create, delete, get, list, watch | Sandbox pod management |
+| `resourcequotas`, `limitranges` | core | create, delete, get, list, watch | Resource limits enforcement |
+| `networkpolicies` | networking.k8s.io | create, delete, get, list, watch, update, patch | Network isolation controls |
+| `persistentvolumeclaims` | core | create, delete, get, list, watch | Sandbox storage |
+| `events` | core | get, list, watch | Debugging and monitoring |
+| `runtimeclasses` | node.k8s.io | get, list, watch | Runtime isolation (gVisor, Kata) |
+| `pods` | metrics.k8s.io | get, list | CPU/Memory metrics collection |
+
 ## Example Configurations
 
 ### Development Configuration
