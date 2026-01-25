@@ -49,19 +49,26 @@ RUN cat > /docker-entrypoint.d/99-configure-env.sh << 'SCRIPT'
 set -e
 
 # Generate nginx config from template
+# VITE_API_URL is the internal API URL for nginx proxy (e.g., http://agentbox-api:8080)
 envsubst '$VITE_API_URL' < /etc/nginx/nginx.conf.template > /tmp/nginx.conf
 cp /tmp/nginx.conf /etc/nginx/nginx.conf
 
-# Create runtime config for frontend
+# Create runtime config for frontend JavaScript
+# Browser always uses relative URL so nginx can proxy the requests
+# BROWSER_API_URL can override if direct browser-to-API access is needed
+BROWSER_URL="${BROWSER_API_URL:-/api/v1}"
+
 cat > /usr/share/nginx/html/config.js << EOF
 window.AGENTBOX_CONFIG = {
-  API_URL: "${VITE_API_URL:-/api/v1}",
+  API_URL: "${BROWSER_URL}",
   WS_URL: "${VITE_WS_URL:-}",
   GOOGLE_OAUTH_ENABLED: "${VITE_GOOGLE_OAUTH_ENABLED:-false}"
 };
 EOF
 
-echo "Runtime configuration generated successfully"
+echo "Runtime configuration generated:"
+echo "  Nginx proxy URL: ${VITE_API_URL:-not set}"
+echo "  Browser API URL: ${BROWSER_URL}"
 SCRIPT
 
 RUN chmod +x /docker-entrypoint.d/99-configure-env.sh
