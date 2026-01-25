@@ -5,12 +5,12 @@
 api:
   image:
     repository: ghcr.io/sciffer/agentbox
-    tag: "c9cb1eb"
+    tag: "851f244"
     pullPolicy: IfNotPresent
 ui:
   image:
     repository: ghcr.io/sciffer/agentbox-ui
-    tag: "c9cb1eb"
+    tag: "851f244"
     pullPolicy: IfNotPresent
 secrets:
   create: true
