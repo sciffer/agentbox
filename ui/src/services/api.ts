@@ -2,7 +2,32 @@ import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '../store/authStore'
 import { CreateEnvironmentData, CreateUserData } from '../types'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'
+// Runtime config from window.AGENTBOX_CONFIG (set by Docker entrypoint)
+// Falls back to build-time env var, then to relative path for API proxy
+declare global {
+  interface Window {
+    AGENTBOX_CONFIG?: {
+      API_URL?: string
+      WS_URL?: string
+      GOOGLE_OAUTH_ENABLED?: string
+    }
+  }
+}
+
+function getApiUrl(): string {
+  // First try runtime config (Docker/Kubernetes)
+  if (typeof window !== 'undefined' && window.AGENTBOX_CONFIG?.API_URL) {
+    return window.AGENTBOX_CONFIG.API_URL
+  }
+  // Then try build-time env var (development)
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  // Default to relative path (nginx proxy handles /api)
+  return '/api/v1'
+}
+
+const API_URL = getApiUrl()
 
 export const apiClient = axios.create({
   baseURL: API_URL,
