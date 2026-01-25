@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Box, Typography, Button, TextField, FormControlLabel, Switch } from '@mui/material'
 import { Refresh as RefreshIcon } from '@mui/icons-material'
 import { environmentsAPI } from '../../services/api'
+import { LogEntry } from '../../types'
 
 interface LogViewerProps {
   environmentId: string
@@ -23,17 +24,17 @@ export default function LogViewer({ environmentId }: LogViewerProps) {
     scrollToBottom()
   }, [logs])
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       const response = await environmentsAPI.getLogs(environmentId, {
         tail,
         timestamps: includeTimestamps,
       })
-      setLogs(response.logs?.map((log: any) => log.message) || [])
+      setLogs(response.logs?.map((log: LogEntry) => log.message) || [])
     } catch (error) {
       console.error('Failed to fetch logs:', error)
     }
-  }
+  }, [environmentId, tail, includeTimestamps])
 
   useEffect(() => {
     if (follow) {
@@ -42,9 +43,9 @@ export default function LogViewer({ environmentId }: LogViewerProps) {
 
       eventSource.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data)
-          setLogs((prev) => [...prev, data.message || data.data])
-        } catch (e) {
+          const data = JSON.parse(event.data) as LogEntry
+          setLogs((prev) => [...prev, data.message || event.data])
+        } catch {
           setLogs((prev) => [...prev, event.data])
         }
       }
@@ -61,7 +62,7 @@ export default function LogViewer({ environmentId }: LogViewerProps) {
     } else {
       fetchLogs()
     }
-  }, [environmentId, follow, tail, includeTimestamps])
+  }, [environmentId, follow, includeTimestamps, fetchLogs])
 
   return (
     <Box>

@@ -15,6 +15,7 @@ import {
 } from '@mui/icons-material'
 import { environmentsAPI, metricsAPI } from '../services/api'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { Environment, Metric } from '../types'
 
 export default function DashboardPage() {
   const { data: environments } = useQuery({
@@ -27,14 +28,16 @@ export default function DashboardPage() {
     queryFn: () => metricsAPI.getGlobal({ type: 'running_sandboxes' }),
   })
 
+  const envList = environments?.environments as Environment[] | undefined
   const stats = {
     total: environments?.total || 0,
-    running: environments?.environments?.filter((e: any) => e.status === 'running').length || 0,
-    pending: environments?.environments?.filter((e: any) => e.status === 'pending').length || 0,
-    failed: environments?.environments?.filter((e: any) => e.status === 'failed').length || 0,
+    running: envList?.filter((e) => e.status === 'running').length || 0,
+    pending: envList?.filter((e) => e.status === 'pending').length || 0,
+    failed: envList?.filter((e) => e.status === 'failed').length || 0,
   }
 
-  const chartData = metrics?.metrics?.map((m: any) => ({
+  const metricsList = metrics?.metrics as Metric[] | undefined
+  const chartData = metricsList?.map((m) => ({
     time: new Date(m.timestamp).toLocaleTimeString(),
     value: m.value,
   })) || []

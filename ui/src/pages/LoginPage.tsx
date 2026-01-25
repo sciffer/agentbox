@@ -14,6 +14,7 @@ import {
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { AxiosError } from 'axios'
 import { authAPI } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 
@@ -23,6 +24,10 @@ const loginSchema = z.object({
 })
 
 type LoginFormData = z.infer<typeof loginSchema>
+
+interface APIErrorResponse {
+  message?: string
+}
 
 export default function LoginPage() {
   const [tab, setTab] = useState(0)
@@ -46,8 +51,9 @@ export default function LoginPage() {
       const response = await authAPI.login(data.username, data.password)
       setAuth(response.token, response.user)
       navigate('/')
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Login failed. Please check your credentials.')
+    } catch (err) {
+      const axiosError = err as AxiosError<APIErrorResponse>
+      setError(axiosError.response?.data?.message || 'Login failed. Please check your credentials.')
     } finally {
       setLoading(false)
     }

@@ -30,6 +30,7 @@ import { environmentsAPI } from '../services/api'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { Environment, CreateEnvironmentData } from '../types'
 
 const createEnvSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -69,7 +70,7 @@ export default function EnvironmentsPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => environmentsAPI.create(data),
+    mutationFn: (data: CreateEnvironmentData) => environmentsAPI.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['environments'] })
       setOpen(false)
@@ -90,14 +91,14 @@ export default function EnvironmentsPage() {
     },
   })
 
-  const onSubmit = (data: CreateEnvFormData) => {
+  const onSubmit = (formData: CreateEnvFormData) => {
     createMutation.mutate({
-      name: data.name,
-      image: data.image,
+      name: formData.name,
+      image: formData.image,
       resources: {
-        cpu: data.cpu,
-        memory: data.memory,
-        storage: data.storage,
+        cpu: formData.cpu,
+        memory: formData.memory,
+        storage: formData.storage,
       },
     })
   }
@@ -107,6 +108,8 @@ export default function EnvironmentsPage() {
       deleteMutation.mutate(id)
     }
   }
+
+  const envList = data?.environments as Environment[] | undefined
 
   return (
     <Box>
@@ -140,14 +143,14 @@ export default function EnvironmentsPage() {
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : data?.environments?.length === 0 ? (
+            ) : envList?.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} align="center">
                   No environments found
                 </TableCell>
               </TableRow>
             ) : (
-              data?.environments?.map((env: any) => (
+              envList?.map((env) => (
                 <TableRow key={env.id}>
                   <TableCell>{env.name}</TableCell>
                   <TableCell>

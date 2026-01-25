@@ -29,6 +29,7 @@ import { useAuthStore } from '../store/authStore'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { User, CreateUserData } from '../types'
 
 const createUserSchema = z.object({
   username: z.string().min(1, 'Username is required'),
@@ -51,7 +52,7 @@ export default function UsersPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => usersAPI.create(data),
+    mutationFn: (formData: CreateUserData) => usersAPI.create(formData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setOpen(false)
@@ -71,13 +72,13 @@ export default function UsersPage() {
     },
   })
 
-  const onSubmit = (data: CreateUserFormData) => {
+  const onSubmit = (formData: CreateUserFormData) => {
     createMutation.mutate({
-      username: data.username,
-      email: data.email || undefined,
-      password: data.password,
-      role: data.role,
-      status: data.status,
+      username: formData.username,
+      email: formData.email || undefined,
+      password: formData.password,
+      role: formData.role,
+      status: formData.status,
     })
   }
 
@@ -88,6 +89,8 @@ export default function UsersPage() {
       <Alert severity="error">You don't have permission to view this page.</Alert>
     )
   }
+
+  const users = data?.users as User[] | undefined
 
   return (
     <Box>
@@ -120,14 +123,14 @@ export default function UsersPage() {
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : data?.users?.length === 0 ? (
+            ) : users?.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} align="center">
                   No users found
                 </TableCell>
               </TableRow>
             ) : (
-              data?.users?.map((user: any) => (
+              users?.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell>{user.username}</TableCell>
                   <TableCell>{user.email || '-'}</TableCell>
