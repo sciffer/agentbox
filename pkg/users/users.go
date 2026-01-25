@@ -344,4 +344,3 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword string
 
 	return nil
 }
-
