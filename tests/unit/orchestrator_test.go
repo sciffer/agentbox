@@ -679,3 +679,184 @@ func TestDeleteEnvironmentForce(t *testing.T) {
 	exists, _ := mockK8s.NamespaceExists(ctx, env.Namespace)
 	assert.False(t, exists, "namespace should be deleted with force flag")
 }
+
+func TestCreateEnvironmentWithIsolationRuntimeClass(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment with custom runtime class
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-isolation",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Isolation: &models.IsolationConfig{
+			RuntimeClass: "kata-qemu",
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, env)
+
+	// Verify isolation config is stored
+	assert.NotNil(t, env.Isolation)
+	assert.Equal(t, "kata-qemu", env.Isolation.RuntimeClass)
+}
+
+func TestCreateEnvironmentWithNetworkPolicy(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment with custom network policy
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-network",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Isolation: &models.IsolationConfig{
+			NetworkPolicy: &models.NetworkPolicyConfig{
+				AllowInternet:        false,
+				AllowedEgressCIDRs:   []string{"10.0.0.0/8", "192.168.0.0/16"},
+				AllowedIngressPorts:  []int32{8080, 443},
+				AllowClusterInternal: true,
+			},
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, env)
+
+	// Verify network policy config is stored
+	assert.NotNil(t, env.Isolation)
+	assert.NotNil(t, env.Isolation.NetworkPolicy)
+	assert.False(t, env.Isolation.NetworkPolicy.AllowInternet)
+	assert.Equal(t, []string{"10.0.0.0/8", "192.168.0.0/16"}, env.Isolation.NetworkPolicy.AllowedEgressCIDRs)
+	assert.Equal(t, []int32{8080, 443}, env.Isolation.NetworkPolicy.AllowedIngressPorts)
+	assert.True(t, env.Isolation.NetworkPolicy.AllowClusterInternal)
+}
+
+func TestCreateEnvironmentWithSecurityContext(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	runAsUser := int64(1000)
+	runAsGroup := int64(1000)
+	runAsNonRoot := true
+	readOnlyRootFS := true
+	allowPrivEsc := false
+
+	// Create environment with security context
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-security",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Isolation: &models.IsolationConfig{
+			SecurityContext: &models.SecurityContextConfig{
+				RunAsUser:                &runAsUser,
+				RunAsGroup:               &runAsGroup,
+				RunAsNonRoot:             &runAsNonRoot,
+				ReadOnlyRootFilesystem:   &readOnlyRootFS,
+				AllowPrivilegeEscalation: &allowPrivEsc,
+			},
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, env)
+
+	// Verify security context is stored
+	assert.NotNil(t, env.Isolation)
+	assert.NotNil(t, env.Isolation.SecurityContext)
+	assert.Equal(t, &runAsUser, env.Isolation.SecurityContext.RunAsUser)
+	assert.Equal(t, &runAsGroup, env.Isolation.SecurityContext.RunAsGroup)
+	assert.Equal(t, &runAsNonRoot, env.Isolation.SecurityContext.RunAsNonRoot)
+	assert.Equal(t, &readOnlyRootFS, env.Isolation.SecurityContext.ReadOnlyRootFilesystem)
+	assert.Equal(t, &allowPrivEsc, env.Isolation.SecurityContext.AllowPrivilegeEscalation)
+}
+
+func TestCreateEnvironmentWithFullIsolationConfig(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	runAsNonRoot := true
+	readOnlyRootFS := true
+	allowPrivEsc := false
+
+	// Create environment with full isolation config
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-full-isolation",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Isolation: &models.IsolationConfig{
+			RuntimeClass: "gvisor",
+			NetworkPolicy: &models.NetworkPolicyConfig{
+				AllowInternet:        false,
+				AllowedEgressCIDRs:   []string{"10.0.0.0/8"},
+				AllowedIngressPorts:  []int32{8080},
+				AllowClusterInternal: false,
+			},
+			SecurityContext: &models.SecurityContextConfig{
+				RunAsNonRoot:             &runAsNonRoot,
+				ReadOnlyRootFilesystem:   &readOnlyRootFS,
+				AllowPrivilegeEscalation: &allowPrivEsc,
+			},
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, env)
+
+	// Verify all isolation settings are stored
+	assert.NotNil(t, env.Isolation)
+	assert.Equal(t, "gvisor", env.Isolation.RuntimeClass)
+	assert.NotNil(t, env.Isolation.NetworkPolicy)
+	assert.NotNil(t, env.Isolation.SecurityContext)
+}
+
+func TestCreateEnvironmentWithInternetAccess(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment with internet access enabled
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-internet",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Isolation: &models.IsolationConfig{
+			NetworkPolicy: &models.NetworkPolicyConfig{
+				AllowInternet: true,
+			},
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, env)
+
+	// Verify internet access is stored
+	assert.NotNil(t, env.Isolation)
+	assert.NotNil(t, env.Isolation.NetworkPolicy)
+	assert.True(t, env.Isolation.NetworkPolicy.AllowInternet)
+}

@@ -23,10 +23,10 @@ rules:
   - apiGroups: [""]
     resources: ["resourcequotas", "limitranges"]
     verbs: ["create", "delete", "get", "list", "watch"]
-  # Manage network policies in any namespace
+  # Manage network policies in any namespace (for isolation controls)
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["create", "delete", "get", "list", "watch"]
+    verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
   # Read persistent volume claims (for sandbox storage)
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
@@ -35,6 +35,14 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
+  # Read runtime classes (for isolation runtime selection - gVisor, Kata, etc.)
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get", "list", "watch"]
+  # Read pod metrics (for CPU/memory monitoring)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

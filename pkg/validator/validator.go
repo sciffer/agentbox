@@ -105,6 +105,81 @@ func (v *Validator) ValidateCreateRequest(req *models.CreateEnvironmentRequest) 
 		}
 	}
 
+	// Validate isolation config
+	if req.Isolation != nil {
+		if err := validateIsolationConfig(req.Isolation); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateIsolationConfig validates isolation configuration
+func validateIsolationConfig(isolation *models.IsolationConfig) error {
+	// Validate runtime class (if specified)
+	if isolation.RuntimeClass != "" {
+		// Runtime class names follow DNS-1123 label convention
+		if !nameRegex.MatchString(isolation.RuntimeClass) {
+			return fmt.Errorf("isolation.runtime_class must be lowercase alphanumeric with hyphens")
+		}
+		if len(isolation.RuntimeClass) > 63 {
+			return fmt.Errorf("isolation.runtime_class must be 63 characters or less")
+		}
+	}
+
+	// Validate network policy config
+	if isolation.NetworkPolicy != nil {
+		if err := validateNetworkPolicyConfig(isolation.NetworkPolicy); err != nil {
+			return err
+		}
+	}
+
+	// Validate security context config
+	if isolation.SecurityContext != nil {
+		if err := validateSecurityContextConfig(isolation.SecurityContext); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateNetworkPolicyConfig validates network policy configuration
+func validateNetworkPolicyConfig(np *models.NetworkPolicyConfig) error {
+	// Validate CIDR blocks
+	cidrRegex := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$`)
+	for i, cidr := range np.AllowedEgressCIDRs {
+		if cidr == "" {
+			continue
+		}
+		if !cidrRegex.MatchString(cidr) {
+			return fmt.Errorf("isolation.network_policy.allowed_egress_cidrs[%d]: invalid CIDR format '%s'", i, cidr)
+		}
+	}
+
+	// Validate ports
+	for i, port := range np.AllowedIngressPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("isolation.network_policy.allowed_ingress_ports[%d]: port must be between 1 and 65535", i)
+		}
+	}
+
+	return nil
+}
+
+// validateSecurityContextConfig validates security context configuration
+func validateSecurityContextConfig(sc *models.SecurityContextConfig) error {
+	// Validate run_as_user (must be non-negative if specified)
+	if sc.RunAsUser != nil && *sc.RunAsUser < 0 {
+		return fmt.Errorf("isolation.security_context.run_as_user must be non-negative")
+	}
+
+	// Validate run_as_group (must be non-negative if specified)
+	if sc.RunAsGroup != nil && *sc.RunAsGroup < 0 {
+		return fmt.Errorf("isolation.security_context.run_as_group must be non-negative")
+	}
+
 	return nil
 }
 

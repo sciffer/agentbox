@@ -624,3 +624,351 @@ func TestValidateTolerations(t *testing.T) {
 func ptr(i int64) *int64 {
 	return &i
 }
+
+// boolPtr is a helper function to create a pointer to a bool
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func TestValidateIsolationConfig(t *testing.T) {
+	v := validator.New(10000, 10*1024*1024*1024, 100*1024*1024*1024, 86400)
+
+	tests := []struct {
+		name        string
+		request     models.CreateEnvironmentRequest
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid isolation with runtime class only",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					RuntimeClass: "gvisor",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid isolation with kata runtime",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					RuntimeClass: "kata-qemu",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid isolation with full network policy",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowInternet:        false,
+						AllowedEgressCIDRs:   []string{"10.0.0.0/8", "192.168.0.0/16"},
+						AllowedIngressPorts:  []int32{8080, 443},
+						AllowClusterInternal: true,
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid isolation with security context",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					SecurityContext: &models.SecurityContextConfig{
+						RunAsUser:                ptr(1000),
+						RunAsGroup:               ptr(1000),
+						RunAsNonRoot:             boolPtr(true),
+						ReadOnlyRootFilesystem:   boolPtr(true),
+						AllowPrivilegeEscalation: boolPtr(false),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid full isolation config",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					RuntimeClass: "gvisor",
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowInternet:        false,
+						AllowedEgressCIDRs:   []string{"10.0.0.0/8"},
+						AllowedIngressPorts:  []int32{8080},
+						AllowClusterInternal: false,
+					},
+					SecurityContext: &models.SecurityContextConfig{
+						RunAsNonRoot:             boolPtr(true),
+						ReadOnlyRootFilesystem:   boolPtr(true),
+						AllowPrivilegeEscalation: boolPtr(false),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid runtime class - uppercase",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					RuntimeClass: "GVisor",
+				},
+			},
+			expectError: true,
+			errorMsg:    "runtime_class must be lowercase",
+		},
+		{
+			name: "invalid runtime class - too long",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					RuntimeClass: "this-runtime-class-name-is-way-too-long-and-exceeds-the-sixty-three-character-limit",
+				},
+			},
+			expectError: true,
+			errorMsg:    "runtime_class must be 63 characters or less",
+		},
+		{
+			name: "invalid CIDR format",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowedEgressCIDRs: []string{"invalid-cidr"},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid CIDR format",
+		},
+		{
+			name: "invalid CIDR format - missing mask",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowedEgressCIDRs: []string{"10.0.0.0"},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "invalid CIDR format",
+		},
+		{
+			name: "invalid port - too high",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowedIngressPorts: []int32{70000},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "port must be between 1 and 65535",
+		},
+		{
+			name: "invalid port - zero",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowedIngressPorts: []int32{0},
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "port must be between 1 and 65535",
+		},
+		{
+			name: "invalid run_as_user - negative",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					SecurityContext: &models.SecurityContextConfig{
+						RunAsUser: ptr(-1),
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "run_as_user must be non-negative",
+		},
+		{
+			name: "invalid run_as_group - negative",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					SecurityContext: &models.SecurityContextConfig{
+						RunAsGroup: ptr(-100),
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "run_as_group must be non-negative",
+		},
+		{
+			name: "nil isolation config (valid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: nil,
+			},
+			expectError: false,
+		},
+		{
+			name: "empty isolation config (valid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{},
+			},
+			expectError: false,
+		},
+		{
+			name: "allow internet with specific CIDRs (valid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					NetworkPolicy: &models.NetworkPolicyConfig{
+						AllowInternet:      true,
+						AllowedEgressCIDRs: []string{"10.0.0.0/8"}, // Can also have specific CIDRs
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid security context with user 0 (root)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Isolation: &models.IsolationConfig{
+					SecurityContext: &models.SecurityContextConfig{
+						RunAsUser:  ptr(0),
+						RunAsGroup: ptr(0),
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := v.ValidateCreateRequest(&tt.request)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

@@ -11,8 +11,21 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// CreateNetworkPolicy creates a network policy for isolation
+// NetworkPolicyConfig holds network policy configuration
+type NetworkPolicyConfig struct {
+	AllowInternet        bool
+	AllowedEgressCIDRs   []string
+	AllowedIngressPorts  []int32
+	AllowClusterInternal bool
+}
+
+// CreateNetworkPolicy creates a network policy for isolation (uses default restrictive config)
 func (c *Client) CreateNetworkPolicy(ctx context.Context, namespace string) error {
+	return c.CreateNetworkPolicyWithConfig(ctx, namespace, nil)
+}
+
+// CreateNetworkPolicyWithConfig creates a network policy with custom configuration
+func (c *Client) CreateNetworkPolicyWithConfig(ctx context.Context, namespace string, config *NetworkPolicyConfig) error {
 	// Default deny all ingress and egress
 	policyTypes := []networkingv1.PolicyType{
 		networkingv1.PolicyTypeIngress,
@@ -24,6 +37,96 @@ func (c *Client) CreateNetworkPolicy(ctx context.Context, namespace string) erro
 	udpProtocol := corev1.ProtocolUDP
 	tcpProtocol := corev1.ProtocolTCP
 
+	// Start with DNS egress rule (always required)
+	egressRules := []networkingv1.NetworkPolicyEgressRule{
+		{
+			// Allow DNS to kube-dns
+			Ports: []networkingv1.NetworkPolicyPort{
+				{
+					Protocol: &udpProtocol,
+					Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: dnsPort},
+				},
+				{
+					Protocol: &tcpProtocol,
+					Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: dnsPort},
+				},
+			},
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"name": "kube-system",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Build ingress rules
+	var ingressRules []networkingv1.NetworkPolicyIngressRule
+
+	if config != nil {
+		// Allow internet access if enabled
+		if config.AllowInternet {
+			egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+				// Allow all egress (no restrictions)
+				To: []networkingv1.NetworkPolicyPeer{},
+			})
+		}
+
+		// Add allowed egress CIDRs
+		for _, cidr := range config.AllowedEgressCIDRs {
+			if cidr == "" {
+				continue
+			}
+			egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						IPBlock: &networkingv1.IPBlock{
+							CIDR: cidr,
+						},
+					},
+				},
+			})
+		}
+
+		// Allow cluster internal traffic if enabled
+		if config.AllowClusterInternal {
+			// Allow egress to all pods in the cluster
+			egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						PodSelector: &metav1.LabelSelector{}, // All pods
+					},
+				},
+			})
+			// Allow ingress from all pods in the cluster
+			ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
+				From: []networkingv1.NetworkPolicyPeer{
+					{
+						PodSelector: &metav1.LabelSelector{}, // All pods
+					},
+				},
+			})
+		}
+
+		// Add allowed ingress ports
+		if len(config.AllowedIngressPorts) > 0 {
+			ports := make([]networkingv1.NetworkPolicyPort, 0, len(config.AllowedIngressPorts))
+			for _, port := range config.AllowedIngressPorts {
+				ports = append(ports, networkingv1.NetworkPolicyPort{
+					Protocol: &tcpProtocol,
+					Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: port},
+				})
+			}
+			ingressRules = append(ingressRules, networkingv1.NetworkPolicyIngressRule{
+				Ports: ports,
+				From:  []networkingv1.NetworkPolicyPeer{}, // From anywhere
+			})
+		}
+	}
+
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "isolation-policy",
@@ -33,33 +136,8 @@ func (c *Client) CreateNetworkPolicy(ctx context.Context, namespace string) erro
 			// Apply to all pods in namespace
 			PodSelector: metav1.LabelSelector{},
 			PolicyTypes: policyTypes,
-			// Deny all ingress by default (empty ingress rules)
-			Ingress: []networkingv1.NetworkPolicyIngressRule{},
-			// Allow only DNS egress
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					// Allow DNS to kube-dns
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: &udpProtocol,
-							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: dnsPort},
-						},
-						{
-							Protocol: &tcpProtocol,
-							Port:     &intstr.IntOrString{Type: intstr.Int, IntVal: dnsPort},
-						},
-					},
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"name": "kube-system",
-								},
-							},
-						},
-					},
-				},
-			},
+			Ingress:     ingressRules,
+			Egress:      egressRules,
 		},
 	}
 

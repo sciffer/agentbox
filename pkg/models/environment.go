@@ -22,6 +22,43 @@ type Toleration struct {
 	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
 }
 
+// NetworkPolicyConfig defines network isolation settings
+type NetworkPolicyConfig struct {
+	// AllowInternet enables full internet access (default: false)
+	AllowInternet bool `json:"allow_internet,omitempty"`
+	// AllowedEgressCIDRs specifies allowed outbound IP ranges (e.g., ["10.0.0.0/8", "192.168.1.0/24"])
+	AllowedEgressCIDRs []string `json:"allowed_egress_cidrs,omitempty"`
+	// AllowedIngressPorts specifies ports to allow inbound traffic (e.g., [8080, 443])
+	AllowedIngressPorts []int32 `json:"allowed_ingress_ports,omitempty"`
+	// AllowClusterInternal allows traffic to other pods in the cluster (default: false)
+	AllowClusterInternal bool `json:"allow_cluster_internal,omitempty"`
+}
+
+// SecurityContextConfig defines pod security settings
+type SecurityContextConfig struct {
+	// RunAsUser specifies the UID to run the container as
+	RunAsUser *int64 `json:"run_as_user,omitempty"`
+	// RunAsGroup specifies the GID to run the container as
+	RunAsGroup *int64 `json:"run_as_group,omitempty"`
+	// RunAsNonRoot ensures the container runs as non-root user
+	RunAsNonRoot *bool `json:"run_as_non_root,omitempty"`
+	// ReadOnlyRootFilesystem mounts the root filesystem as read-only
+	ReadOnlyRootFilesystem *bool `json:"read_only_root_filesystem,omitempty"`
+	// AllowPrivilegeEscalation controls whether a process can gain more privileges
+	AllowPrivilegeEscalation *bool `json:"allow_privilege_escalation,omitempty"`
+}
+
+// IsolationConfig defines the isolation level and security settings
+type IsolationConfig struct {
+	// RuntimeClass specifies the container runtime (e.g., "gvisor", "kata", "runc")
+	// Empty string uses the cluster default
+	RuntimeClass string `json:"runtime_class,omitempty"`
+	// NetworkPolicy defines network isolation settings
+	NetworkPolicy *NetworkPolicyConfig `json:"network_policy,omitempty"`
+	// SecurityContext defines pod security settings
+	SecurityContext *SecurityContextConfig `json:"security_context,omitempty"`
+}
+
 // Environment represents an isolated execution environment
 type Environment struct {
 	ID           string            `json:"id"`
@@ -41,6 +78,7 @@ type Environment struct {
 	UserID       string            `json:"user_id,omitempty"`
 	NodeSelector map[string]string `json:"node_selector,omitempty"`
 	Tolerations  []Toleration      `json:"tolerations,omitempty"`
+	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
 }
 
 // ResourceSpec defines resource limits and requests
@@ -67,6 +105,7 @@ type CreateEnvironmentRequest struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 	NodeSelector map[string]string `json:"node_selector,omitempty"`
 	Tolerations  []Toleration      `json:"tolerations,omitempty"`
+	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
 }
 
 // ExecRequest is the request body for executing a command

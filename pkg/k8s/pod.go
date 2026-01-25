@@ -23,20 +23,30 @@ type Toleration struct {
 	TolerationSeconds *int64
 }
 
+// SecurityContext holds pod security context settings
+type SecurityContext struct {
+	RunAsUser                *int64
+	RunAsGroup               *int64
+	RunAsNonRoot             *bool
+	ReadOnlyRootFilesystem   *bool
+	AllowPrivilegeEscalation *bool
+}
+
 // PodSpec holds pod creation parameters
 type PodSpec struct {
-	Name         string
-	Namespace    string
-	Image        string
-	Command      []string
-	Env          map[string]string
-	CPU          string
-	Memory       string
-	Storage      string
-	RuntimeClass string
-	Labels       map[string]string
-	NodeSelector map[string]string
-	Tolerations  []Toleration
+	Name            string
+	Namespace       string
+	Image           string
+	Command         []string
+	Env             map[string]string
+	CPU             string
+	Memory          string
+	Storage         string
+	RuntimeClass    string
+	Labels          map[string]string
+	NodeSelector    map[string]string
+	Tolerations     []Toleration
+	SecurityContext *SecurityContext
 }
 
 // CreatePod creates a new pod
@@ -97,6 +107,18 @@ func (c *Client) CreatePod(ctx context.Context, spec *PodSpec) error {
 		tolerations = append(tolerations, toleration)
 	}
 
+	// Build container security context
+	var containerSecurityContext *corev1.SecurityContext
+	if spec.SecurityContext != nil {
+		containerSecurityContext = &corev1.SecurityContext{
+			RunAsUser:                spec.SecurityContext.RunAsUser,
+			RunAsGroup:               spec.SecurityContext.RunAsGroup,
+			RunAsNonRoot:             spec.SecurityContext.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   spec.SecurityContext.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: spec.SecurityContext.AllowPrivilegeEscalation,
+		}
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.Name,
@@ -115,10 +137,11 @@ func (c *Client) CreatePod(ctx context.Context, spec *PodSpec) error {
 			Tolerations:  tolerations,
 			Containers: []corev1.Container{
 				{
-					Name:    "main",
-					Image:   spec.Image,
-					Command: spec.Command,
-					Env:     envVars,
+					Name:            "main",
+					Image:           spec.Image,
+					Command:         spec.Command,
+					Env:             envVars,
+					SecurityContext: containerSecurityContext,
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceCPU:              resource.MustParse(spec.CPU),
