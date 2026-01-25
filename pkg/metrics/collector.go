@@ -112,7 +112,8 @@ func (c *Collector) collectGlobalMetrics(ctx context.Context) {
 	var totalCPU, totalMemory float64
 	var startTimes []time.Duration
 
-	for _, env := range envs.Environments {
+	for i := range envs.Environments {
+		env := &envs.Environments[i]
 		if env.Status == "running" {
 			runningCount++
 		}
@@ -125,7 +126,9 @@ func (c *Collector) collectGlobalMetrics(ctx context.Context) {
 	}
 
 	// Store running sandboxes metric
-	c.storeMetric(ctx, "", "running_sandboxes", float64(runningCount))
+	if err := c.storeMetric(ctx, "", "running_sandboxes", float64(runningCount)); err != nil {
+		c.logger.Warn("failed to store running_sandboxes metric", zap.Error(err))
+	}
 
 	// Calculate average start time
 	if len(startTimes) > 0 {
@@ -134,14 +137,20 @@ func (c *Collector) collectGlobalMetrics(ctx context.Context) {
 			total += st
 		}
 		avgStartTime := total / time.Duration(len(startTimes))
-		c.storeMetric(ctx, "", "start_time", avgStartTime.Seconds())
+		if err := c.storeMetric(ctx, "", "start_time", avgStartTime.Seconds()); err != nil {
+			c.logger.Warn("failed to store start_time metric", zap.Error(err))
+		}
 	}
 
 	// TODO: Collect actual CPU and memory usage from Kubernetes
 	// For now, store placeholder values
 	if runningCount > 0 {
-		c.storeMetric(ctx, "", "cpu_usage", totalCPU)
-		c.storeMetric(ctx, "", "memory_usage", totalMemory)
+		if err := c.storeMetric(ctx, "", "cpu_usage", totalCPU); err != nil {
+			c.logger.Warn("failed to store cpu_usage metric", zap.Error(err))
+		}
+		if err := c.storeMetric(ctx, "", "memory_usage", totalMemory); err != nil {
+			c.logger.Warn("failed to store memory_usage metric", zap.Error(err))
+		}
 	}
 }
 
@@ -154,32 +163,41 @@ func (c *Collector) collectEnvironmentMetrics(ctx context.Context) {
 		return
 	}
 
-	for _, env := range envs.Environments {
+	for i := range envs.Environments {
+		env := &envs.Environments[i]
 		if env.Status == "running" {
 			// Count running sandboxes for this environment
-			c.storeMetric(ctx, env.ID, "running_sandboxes", 1.0)
+			if err := c.storeMetric(ctx, env.ID, "running_sandboxes", 1.0); err != nil {
+				c.logger.Warn("failed to store env running_sandboxes metric", zap.Error(err))
+			}
 
 			// TODO: Get actual CPU/memory usage from Kubernetes
 			// For now, store placeholder values
-			c.storeMetric(ctx, env.ID, "cpu_usage", 0.0)
-			c.storeMetric(ctx, env.ID, "memory_usage", 0.0)
+			if err := c.storeMetric(ctx, env.ID, "cpu_usage", 0.0); err != nil {
+				c.logger.Warn("failed to store env cpu_usage metric", zap.Error(err))
+			}
+			if err := c.storeMetric(ctx, env.ID, "memory_usage", 0.0); err != nil {
+				c.logger.Warn("failed to store env memory_usage metric", zap.Error(err))
+			}
 
 			// Calculate start time if available
 			if env.StartedAt != nil && !env.CreatedAt.IsZero() {
 				startTime := env.StartedAt.Sub(env.CreatedAt)
-				c.storeMetric(ctx, env.ID, "start_time", startTime.Seconds())
+				if err := c.storeMetric(ctx, env.ID, "start_time", startTime.Seconds()); err != nil {
+					c.logger.Warn("failed to store env start_time metric", zap.Error(err))
+				}
 			}
 		}
 	}
 }
 
 // StoreMetric stores a metric in the database (public for testing)
-func (c *Collector) StoreMetric(ctx context.Context, envID string, metricType string, value float64) error {
+func (c *Collector) StoreMetric(ctx context.Context, envID, metricType string, value float64) error {
 	return c.storeMetric(ctx, envID, metricType, value)
 }
 
 // storeMetric stores a metric in the database
-func (c *Collector) storeMetric(ctx context.Context, envID string, metricType string, value float64) error {
+func (c *Collector) storeMetric(ctx context.Context, envID, metricType string, value float64) error {
 	id := uuid.New().String()
 
 	var envIDNull interface{}
@@ -199,7 +217,8 @@ func (c *Collector) storeMetric(ctx context.Context, envID string, metricType st
 }
 
 // GetMetrics retrieves metrics from the database
-func GetMetrics(ctx context.Context, db *database.DB, envID string, metricType string, startTime, endTime time.Time) ([]Metric, error) {
+func GetMetrics(ctx context.Context, db *database.DB, envID, metricType string,
+	startTime, endTime time.Time) ([]Metric, error) {
 	query := `
 		SELECT id, environment_id, metric_type, value, timestamp
 		FROM metrics
@@ -227,8 +246,7 @@ func GetMetrics(ctx context.Context, db *database.DB, envID string, metricType s
 		var m Metric
 		var envIDNull interface{}
 
-		err := rows.Scan(&m.ID, &envIDNull, &m.MetricType, &m.Value, &m.Timestamp)
-		if err != nil {
+		if err := rows.Scan(&m.ID, &envIDNull, &m.MetricType, &m.Value, &m.Timestamp); err != nil {
 			return nil, fmt.Errorf("failed to scan metric: %w", err)
 		}
 

@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/auth"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 	"github.com/sciffer/agentbox/pkg/validator"
@@ -273,8 +274,10 @@ func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, ctx context
 	if err != nil {
 		h.logger.Error("failed to stream logs", zap.String("environment_id", envID), zap.Error(err))
 		// Send error as SSE event
-		errorJSON, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("failed to stream logs: %v", err)})
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
+		errorJSON, marshalErr := json.Marshal(map[string]string{"error": fmt.Sprintf("failed to stream logs: %v", err)})
+		if marshalErr == nil {
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
+		}
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
@@ -343,9 +346,11 @@ func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, ctx context
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		h.logger.Error("error reading log stream", zap.Error(err))
-		errorJSON, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("error reading logs: %v", err)})
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
-		flusher.Flush()
+		errorJSON, marshalErr := json.Marshal(map[string]string{"error": fmt.Sprintf("error reading logs: %v", err)})
+		if marshalErr == nil {
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorJSON))
+			flusher.Flush()
+		}
 	}
 }
 
@@ -383,11 +388,9 @@ func (h *Handler) respondError(w http.ResponseWriter, status int, message string
 
 func getUserIDFromContext(ctx context.Context) string {
 	// Extract user ID from context (set by auth middleware)
-	// This is a placeholder - will be implemented when auth middleware is added
-	if userID := ctx.Value("user_id"); userID != nil {
-		if id, ok := userID.(string); ok {
-			return id
-		}
+	// Try to get user from auth context first
+	if user, ok := auth.GetUserFromContext(ctx); ok && user != nil {
+		return user.ID
 	}
 	return "anonymous"
 }

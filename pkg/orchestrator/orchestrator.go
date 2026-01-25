@@ -217,7 +217,9 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 }
 
 // ListEnvironments lists all environments with optional filtering
-func (o *Orchestrator) ListEnvironments(ctx context.Context, status *models.EnvironmentStatus, labelSelector string, limit, offset int) (*models.ListEnvironmentsResponse, error) {
+func (o *Orchestrator) ListEnvironments(
+	ctx context.Context, status *models.EnvironmentStatus, labelSelector string, limit, offset int,
+) (*models.ListEnvironmentsResponse, error) {
 	// Validate pagination parameters
 	if limit <= 0 {
 		limit = 100 // Default limit

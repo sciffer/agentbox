@@ -1,5 +1,6 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { ReactElement } from 'react'
-import { render, RenderOptions } from '@testing-library/react'
+import { render, RenderOptions, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import { ThemeProvider, createTheme } from '@mui/material'
@@ -13,8 +14,8 @@ const theme = createTheme({
   },
 })
 
-const createTestQueryClient = () =>
-  new QueryClient({
+function createTestQueryClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
@@ -22,12 +23,13 @@ const createTestQueryClient = () =>
       },
     },
   })
+}
 
 interface AllTheProvidersProps {
   children: React.ReactNode
 }
 
-const AllTheProviders = ({ children }: AllTheProvidersProps) => {
+function AllTheProviders({ children }: AllTheProvidersProps) {
   const queryClient = createTestQueryClient()
 
   return (
@@ -39,10 +41,12 @@ const AllTheProviders = ({ children }: AllTheProvidersProps) => {
   )
 }
 
-const customRender = (
+function customRender(
   ui: ReactElement,
   options?: Omit<RenderOptions, 'wrapper'>
-) => render(ui, { wrapper: AllTheProviders, ...options })
+) {
+  return render(ui, { wrapper: AllTheProviders, ...options })
+}
 
-export * from '@testing-library/react'
+export { screen, waitFor, fireEvent, within }
 export { customRender as render }

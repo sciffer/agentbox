@@ -26,23 +26,29 @@ var (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	flag.Parse()
 
 	// Load configuration
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	// Initialize logger
 	log, err := logger.New(cfg.Server.LogLevel)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create logger: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create logger: %w", err)
 	}
 	defer func() {
-		_ = log.Sync() // Best effort sync on shutdown
+		//nolint:errcheck // Best effort sync on shutdown, ignore error
+		log.Sync()
 	}()
 
 	log.Info("starting agentbox server", zap.String("version", "1.0.0"))
@@ -50,13 +56,13 @@ func main() {
 	// Initialize Kubernetes client
 	k8sClient, err := k8s.NewClient(cfg.Kubernetes.Kubeconfig)
 	if err != nil {
-		log.Fatal("failed to create kubernetes client", zap.Error(err))
+		return fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
 	// Verify Kubernetes connectivity
 	ctx := context.Background()
 	if err := k8sClient.HealthCheck(ctx); err != nil {
-		log.Fatal("kubernetes health check failed", zap.Error(err))
+		return fmt.Errorf("kubernetes health check failed: %w", err)
 	}
 
 	version, err := k8sClient.GetServerVersion(ctx)
@@ -99,19 +105,24 @@ func main() {
 	}
 
 	// Start server in goroutine
+	serverErr := make(chan error, 1)
 	go func() {
 		log.Info("server listening", zap.String("address", addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("server failed", zap.Error(err))
+			serverErr <- err
 		}
 	}()
 
-	// Wait for interrupt signal
+	// Wait for interrupt signal or server error
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
 
-	log.Info("shutting down server...")
+	select {
+	case <-quit:
+		log.Info("shutting down server...")
+	case err := <-serverErr:
+		return fmt.Errorf("server failed: %w", err)
+	}
 
 	// Graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -122,4 +133,5 @@ func main() {
 	}
 
 	log.Info("server stopped")
+	return nil
 }

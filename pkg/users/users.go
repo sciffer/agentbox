@@ -2,9 +2,7 @@ package users
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -13,6 +11,19 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/sciffer/agentbox/pkg/database"
+)
+
+// User status constants
+const (
+	StatusActive   = "active"
+	StatusInactive = "inactive"
+)
+
+// User role constants
+const (
+	RoleUser       = "user"
+	RoleAdmin      = "admin"
+	RoleSuperAdmin = "super_admin"
 )
 
 // Service handles user operations
@@ -77,8 +88,8 @@ func (s *Service) EnsureDefaultAdmin(ctx context.Context) error {
 			Username: adminUsername,
 			Email:    adminEmail,
 			Password: adminPassword,
-			Role:     "super_admin",
-			Status:   "active",
+			Role:     RoleSuperAdmin,
+			Status:   StatusActive,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create default admin: %w", err)
@@ -345,13 +356,4 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword string
 	}
 
 	return nil
-}
-
-// generateRandomString generates a random string of specified length
-func generateRandomString(length int) (string, error) {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
 }
