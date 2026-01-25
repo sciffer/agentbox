@@ -20,27 +20,100 @@ import {
   TextField,
   Alert,
   Typography,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  FormControlLabel,
+  Switch,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Grid,
+  Tooltip,
+  Divider,
 } from '@mui/material'
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
   Visibility as ViewIcon,
+  ExpandMore as ExpandMoreIcon,
+  Info as InfoIcon,
 } from '@mui/icons-material'
 import { environmentsAPI } from '../services/api'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Environment, CreateEnvironmentData } from '../types'
+import { Environment, CreateEnvironmentData, Toleration, IsolationConfig } from '../types'
 
 const createEnvSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().min(1, 'Name is required').regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, 'Must be lowercase alphanumeric with hyphens'),
   image: z.string().min(1, 'Image is required'),
   cpu: z.string().min(1, 'CPU is required'),
   memory: z.string().min(1, 'Memory is required'),
   storage: z.string().min(1, 'Storage is required'),
+  timeout: z.number().optional(),
+  // Node selector as comma-separated key=value pairs
+  nodeSelector: z.string().optional(),
+  // Tolerations as JSON string
+  tolerationsJson: z.string().optional(),
+  // Isolation settings
+  runtimeClass: z.string().optional(),
+  allowInternet: z.boolean().optional(),
+  allowedEgressCidrs: z.string().optional(),
+  allowedIngressPorts: z.string().optional(),
+  allowClusterInternal: z.boolean().optional(),
+  runAsUser: z.string().optional(),
+  runAsGroup: z.string().optional(),
+  runAsNonRoot: z.boolean().optional(),
+  readOnlyRootFilesystem: z.boolean().optional(),
+  allowPrivilegeEscalation: z.boolean().optional(),
 })
 
 type CreateEnvFormData = z.infer<typeof createEnvSchema>
+
+// Helper to parse node selector string to object
+function parseNodeSelector(input: string | undefined): Record<string, string> | undefined {
+  if (!input?.trim()) return undefined
+  const result: Record<string, string> = {}
+  input.split(',').forEach(pair => {
+    const [key, value] = pair.split('=').map(s => s.trim())
+    if (key && value) {
+      result[key] = value
+    }
+  })
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+// Helper to parse tolerations JSON
+function parseTolerations(input: string | undefined): Toleration[] | undefined {
+  if (!input?.trim()) return undefined
+  try {
+    const parsed = JSON.parse(input)
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Helper to parse comma-separated ports
+function parsePorts(input: string | undefined): number[] | undefined {
+  if (!input?.trim()) return undefined
+  const ports = input.split(',')
+    .map(s => parseInt(s.trim(), 10))
+    .filter(n => !isNaN(n) && n > 0 && n <= 65535)
+  return ports.length > 0 ? ports : undefined
+}
+
+// Helper to parse comma-separated CIDRs
+function parseCidrs(input: string | undefined): string[] | undefined {
+  if (!input?.trim()) return undefined
+  const cidrs = input.split(',').map(s => s.trim()).filter(Boolean)
+  return cidrs.length > 0 ? cidrs : undefined
+}
 
 function StatusChip({ status }: { status: string }) {
   const colors: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
@@ -82,16 +155,65 @@ export default function EnvironmentsPage() {
     handleSubmit,
     formState: { errors },
     reset,
+    control,
   } = useForm<CreateEnvFormData>({
     resolver: zodResolver(createEnvSchema),
     defaultValues: {
       cpu: '500m',
       memory: '512Mi',
       storage: '1Gi',
+      timeout: 3600,
+      runtimeClass: '',
+      allowInternet: false,
+      allowClusterInternal: false,
+      runAsNonRoot: false,
+      readOnlyRootFilesystem: false,
+      allowPrivilegeEscalation: false,
     },
   })
 
   const onSubmit = (formData: CreateEnvFormData) => {
+    // Build isolation config if any settings are provided
+    let isolation: IsolationConfig | undefined = undefined
+    
+    const hasRuntimeClass = !!formData.runtimeClass
+    const hasNetworkPolicy = formData.allowInternet || 
+                             formData.allowClusterInternal || 
+                             !!formData.allowedEgressCidrs || 
+                             !!formData.allowedIngressPorts
+    const hasSecurityContext = formData.runAsNonRoot || 
+                                formData.readOnlyRootFilesystem || 
+                                formData.allowPrivilegeEscalation === false ||
+                                !!formData.runAsUser || 
+                                !!formData.runAsGroup
+
+    if (hasRuntimeClass || hasNetworkPolicy || hasSecurityContext) {
+      isolation = {}
+      
+      if (hasRuntimeClass) {
+        isolation.runtime_class = formData.runtimeClass
+      }
+      
+      if (hasNetworkPolicy) {
+        isolation.network_policy = {
+          allow_internet: formData.allowInternet,
+          allow_cluster_internal: formData.allowClusterInternal,
+          allowed_egress_cidrs: parseCidrs(formData.allowedEgressCidrs),
+          allowed_ingress_ports: parsePorts(formData.allowedIngressPorts),
+        }
+      }
+      
+      if (hasSecurityContext) {
+        isolation.security_context = {
+          run_as_non_root: formData.runAsNonRoot || undefined,
+          read_only_root_filesystem: formData.readOnlyRootFilesystem || undefined,
+          allow_privilege_escalation: formData.allowPrivilegeEscalation,
+          run_as_user: formData.runAsUser ? parseInt(formData.runAsUser, 10) : undefined,
+          run_as_group: formData.runAsGroup ? parseInt(formData.runAsGroup, 10) : undefined,
+        }
+      }
+    }
+
     createMutation.mutate({
       name: formData.name,
       image: formData.image,
@@ -100,6 +222,10 @@ export default function EnvironmentsPage() {
         memory: formData.memory,
         storage: formData.storage,
       },
+      timeout: formData.timeout,
+      node_selector: parseNodeSelector(formData.nodeSelector),
+      tolerations: parseTolerations(formData.tolerationsJson),
+      isolation,
     })
   }
 
@@ -185,7 +311,7 @@ export default function EnvironmentsPage() {
         </Table>
       </TableContainer>
 
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth>
         <form onSubmit={handleSubmit(onSubmit)}>
           <DialogTitle>Create Environment</DialogTitle>
           <DialogContent>
@@ -196,59 +322,283 @@ export default function EnvironmentsPage() {
                   : 'Failed to create environment'}
               </Alert>
             )}
-            <TextField
-              margin="dense"
-              label="Name"
-              fullWidth
-              required
-              {...register('name')}
-              error={!!errors.name}
-              helperText={errors.name?.message}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              margin="dense"
-              label="Image"
-              fullWidth
-              required
-              placeholder="python:3.11-slim"
-              {...register('image')}
-              error={!!errors.image}
-              helperText={errors.image?.message}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              margin="dense"
-              label="CPU"
-              fullWidth
-              required
-              placeholder="500m"
-              {...register('cpu')}
-              error={!!errors.cpu}
-              helperText={errors.cpu?.message}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              margin="dense"
-              label="Memory"
-              fullWidth
-              required
-              placeholder="512Mi"
-              {...register('memory')}
-              error={!!errors.memory}
-              helperText={errors.memory?.message}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              margin="dense"
-              label="Storage"
-              fullWidth
-              required
-              placeholder="1Gi"
-              {...register('storage')}
-              error={!!errors.storage}
-              helperText={errors.storage?.message}
-            />
+            
+            {/* Basic Settings */}
+            <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>Basic Settings</Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  margin="dense"
+                  label="Name"
+                  fullWidth
+                  required
+                  {...register('name')}
+                  error={!!errors.name}
+                  helperText={errors.name?.message || 'Lowercase alphanumeric with hyphens'}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  margin="dense"
+                  label="Image"
+                  fullWidth
+                  required
+                  placeholder="python:3.11-slim"
+                  {...register('image')}
+                  error={!!errors.image}
+                  helperText={errors.image?.message}
+                />
+              </Grid>
+            </Grid>
+
+            {/* Resource Settings */}
+            <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Resources</Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  margin="dense"
+                  label="CPU"
+                  fullWidth
+                  required
+                  placeholder="500m"
+                  {...register('cpu')}
+                  error={!!errors.cpu}
+                  helperText={errors.cpu?.message || 'e.g., 500m, 1, 2'}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  margin="dense"
+                  label="Memory"
+                  fullWidth
+                  required
+                  placeholder="512Mi"
+                  {...register('memory')}
+                  error={!!errors.memory}
+                  helperText={errors.memory?.message || 'e.g., 512Mi, 1Gi'}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  margin="dense"
+                  label="Storage"
+                  fullWidth
+                  required
+                  placeholder="1Gi"
+                  {...register('storage')}
+                  error={!!errors.storage}
+                  helperText={errors.storage?.message || 'e.g., 1Gi, 5Gi'}
+                />
+              </Grid>
+            </Grid>
+
+            {/* Advanced Settings Accordions */}
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Advanced Settings (Optional)</Typography>
+
+            {/* Node Scheduling */}
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Node Scheduling</Typography>
+                <Tooltip title="Control which nodes the environment runs on">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                </Tooltip>
+              </AccordionSummary>
+              <AccordionDetails>
+                <TextField
+                  margin="dense"
+                  label="Node Selector"
+                  fullWidth
+                  placeholder="kubernetes.io/arch=amd64,node-type=compute"
+                  {...register('nodeSelector')}
+                  helperText="Comma-separated key=value pairs (e.g., node-type=gpu,zone=us-east-1)"
+                  sx={{ mb: 2 }}
+                />
+                <TextField
+                  margin="dense"
+                  label="Tolerations (JSON)"
+                  fullWidth
+                  multiline
+                  rows={3}
+                  placeholder='[{"key":"dedicated","operator":"Equal","value":"agents","effect":"NoSchedule"}]'
+                  {...register('tolerationsJson')}
+                  helperText="JSON array of Kubernetes tolerations"
+                />
+              </AccordionDetails>
+            </Accordion>
+
+            {/* Runtime Isolation */}
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Runtime Isolation</Typography>
+                <Tooltip title="Container runtime and sandbox settings">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                </Tooltip>
+              </AccordionSummary>
+              <AccordionDetails>
+                <FormControl fullWidth margin="dense">
+                  <InputLabel>Runtime Class</InputLabel>
+                  <Controller
+                    name="runtimeClass"
+                    control={control}
+                    render={({ field }) => (
+                      <Select {...field} label="Runtime Class">
+                        <MenuItem value="">Default (cluster default)</MenuItem>
+                        <MenuItem value="gvisor">gVisor (strong isolation)</MenuItem>
+                        <MenuItem value="kata-qemu">Kata Containers (VM-based)</MenuItem>
+                        <MenuItem value="runc">runc (standard OCI)</MenuItem>
+                      </Select>
+                    )}
+                  />
+                </FormControl>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  gVisor provides application-kernel isolation. Kata runs containers in lightweight VMs.
+                </Typography>
+              </AccordionDetails>
+            </Accordion>
+
+            {/* Network Policy */}
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Network Policy</Typography>
+                <Tooltip title="Control network access for the environment">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                </Tooltip>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <Controller
+                      name="allowInternet"
+                      control={control}
+                      render={({ field }) => (
+                        <FormControlLabel
+                          control={<Switch checked={field.value} onChange={field.onChange} />}
+                          label="Allow Internet Access"
+                        />
+                      )}
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Enable full outbound internet connectivity
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <Controller
+                      name="allowClusterInternal"
+                      control={control}
+                      render={({ field }) => (
+                        <FormControlLabel
+                          control={<Switch checked={field.value} onChange={field.onChange} />}
+                          label="Allow Cluster Internal"
+                        />
+                      )}
+                    />
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Allow traffic to/from other pods in cluster
+                    </Typography>
+                  </Grid>
+                </Grid>
+                <TextField
+                  margin="dense"
+                  label="Allowed Egress CIDRs"
+                  fullWidth
+                  placeholder="10.0.0.0/8,192.168.0.0/16"
+                  {...register('allowedEgressCidrs')}
+                  helperText="Comma-separated IP ranges for outbound traffic (e.g., 10.0.0.0/8)"
+                  sx={{ mt: 2 }}
+                />
+                <TextField
+                  margin="dense"
+                  label="Allowed Ingress Ports"
+                  fullWidth
+                  placeholder="8080,443,3000"
+                  {...register('allowedIngressPorts')}
+                  helperText="Comma-separated ports to allow inbound traffic"
+                />
+              </AccordionDetails>
+            </Accordion>
+
+            {/* Security Context */}
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Security Context</Typography>
+                <Tooltip title="Pod security settings for defense in depth">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                </Tooltip>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      margin="dense"
+                      label="Run as User (UID)"
+                      fullWidth
+                      type="number"
+                      placeholder="1000"
+                      {...register('runAsUser')}
+                      helperText="UID to run the container as"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      margin="dense"
+                      label="Run as Group (GID)"
+                      fullWidth
+                      type="number"
+                      placeholder="1000"
+                      {...register('runAsGroup')}
+                      helperText="GID to run the container as"
+                    />
+                  </Grid>
+                </Grid>
+                <Box sx={{ mt: 2 }}>
+                  <Controller
+                    name="runAsNonRoot"
+                    control={control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={<Switch checked={field.value} onChange={field.onChange} />}
+                        label="Run as Non-Root"
+                      />
+                    )}
+                  />
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ ml: 4 }}>
+                    Enforce running as non-root user (recommended)
+                  </Typography>
+                </Box>
+                <Box sx={{ mt: 1 }}>
+                  <Controller
+                    name="readOnlyRootFilesystem"
+                    control={control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={<Switch checked={field.value} onChange={field.onChange} />}
+                        label="Read-Only Root Filesystem"
+                      />
+                    )}
+                  />
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ ml: 4 }}>
+                    Mount root filesystem as read-only (use volumes for writable data)
+                  </Typography>
+                </Box>
+                <Box sx={{ mt: 1 }}>
+                  <Controller
+                    name="allowPrivilegeEscalation"
+                    control={control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={<Switch checked={field.value} onChange={field.onChange} />}
+                        label="Allow Privilege Escalation"
+                      />
+                    )}
+                  />
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ ml: 4 }}>
+                    Allow processes to gain more privileges (not recommended)
+                  </Typography>
+                </Box>
+              </AccordionDetails>
+            </Accordion>
+
           </DialogContent>
           <DialogActions>
             <Button onClick={() => { setOpen(false); reset() }}>Cancel</Button>

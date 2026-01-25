@@ -10,8 +10,23 @@ import {
   Button,
   CircularProgress,
   Alert,
+  Chip,
+  Divider,
+  Grid,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material'
-import { ArrowBack as ArrowBackIcon } from '@mui/icons-material'
+import { 
+  ArrowBack as ArrowBackIcon,
+  ExpandMore as ExpandMoreIcon,
+  Check as CheckIcon,
+  Close as CloseIcon,
+} from '@mui/icons-material'
 import { environmentsAPI } from '../services/api'
 import TerminalView from '../components/common/TerminalView'
 import LogViewer from '../components/common/LogViewer'
@@ -84,16 +99,222 @@ export default function EnvironmentDetailPage() {
         </Tabs>
         <TabPanel value={tab} index={0}>
           <Box>
+            {/* Basic Information */}
             <Typography variant="h6" gutterBottom>
               Environment Details
             </Typography>
-            <Typography><strong>ID:</strong> {environment.id}</Typography>
-            <Typography><strong>Status:</strong> {environment.status}</Typography>
-            <Typography><strong>Image:</strong> {environment.image}</Typography>
-            <Typography><strong>CPU:</strong> {environment.resources?.cpu}</Typography>
-            <Typography><strong>Memory:</strong> {environment.resources?.memory}</Typography>
-            <Typography><strong>Storage:</strong> {environment.resources?.storage}</Typography>
-            <Typography><strong>Created:</strong> {new Date(environment.created_at).toLocaleString()}</Typography>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={6}>
+                <Table size="small">
+                  <TableBody>
+                    <TableRow>
+                      <TableCell><strong>ID</strong></TableCell>
+                      <TableCell>{environment.id}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell><strong>Status</strong></TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={environment.status} 
+                          color={environment.status === 'running' ? 'success' : environment.status === 'pending' ? 'warning' : 'default'}
+                          size="small"
+                        />
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell><strong>Image</strong></TableCell>
+                      <TableCell><code>{environment.image}</code></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell><strong>Created</strong></TableCell>
+                      <TableCell>{new Date(environment.created_at).toLocaleString()}</TableCell>
+                    </TableRow>
+                    {environment.started_at && (
+                      <TableRow>
+                        <TableCell><strong>Started</strong></TableCell>
+                        <TableCell>{new Date(environment.started_at).toLocaleString()}</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <Table size="small">
+                  <TableBody>
+                    <TableRow>
+                      <TableCell><strong>CPU</strong></TableCell>
+                      <TableCell>{environment.resources?.cpu}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell><strong>Memory</strong></TableCell>
+                      <TableCell>{environment.resources?.memory}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell><strong>Storage</strong></TableCell>
+                      <TableCell>{environment.resources?.storage}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </Grid>
+            </Grid>
+
+            <Divider sx={{ my: 3 }} />
+
+            {/* Node Scheduling */}
+            {(environment.node_selector || environment.tolerations) && (
+              <Accordion defaultExpanded={false}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle1">Node Scheduling</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  {environment.node_selector && Object.keys(environment.node_selector).length > 0 && (
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>Node Selector</Typography>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                        {Object.entries(environment.node_selector).map(([key, value]) => (
+                          <Chip key={key} label={`${key}=${value}`} size="small" variant="outlined" />
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+                  {environment.tolerations && environment.tolerations.length > 0 && (
+                    <Box>
+                      <Typography variant="subtitle2" gutterBottom>Tolerations</Typography>
+                      <Table size="small">
+                        <TableBody>
+                          {environment.tolerations.map((tol: { key?: string; operator?: string; value?: string; effect?: string; tolerationSeconds?: number }, idx: number) => (
+                            <TableRow key={idx}>
+                              <TableCell>{tol.key || '*'}</TableCell>
+                              <TableCell>{tol.operator}</TableCell>
+                              <TableCell>{tol.value || '-'}</TableCell>
+                              <TableCell>{tol.effect}</TableCell>
+                              {tol.tolerationSeconds && <TableCell>{tol.tolerationSeconds}s</TableCell>}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Box>
+                  )}
+                </AccordionDetails>
+              </Accordion>
+            )}
+
+            {/* Isolation Settings */}
+            {environment.isolation && (
+              <Accordion defaultExpanded={false}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle1">Isolation Settings</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Grid container spacing={3}>
+                    {/* Runtime Class */}
+                    {environment.isolation.runtime_class && (
+                      <Grid item xs={12}>
+                        <Typography variant="subtitle2">Runtime Class</Typography>
+                        <Chip 
+                          label={environment.isolation.runtime_class} 
+                          color="primary" 
+                          variant="outlined"
+                          size="small"
+                        />
+                      </Grid>
+                    )}
+
+                    {/* Network Policy */}
+                    {environment.isolation.network_policy && (
+                      <Grid item xs={12} md={6}>
+                        <Typography variant="subtitle2" gutterBottom>Network Policy</Typography>
+                        <Table size="small">
+                          <TableBody>
+                            <TableRow>
+                              <TableCell>Internet Access</TableCell>
+                              <TableCell>
+                                {environment.isolation.network_policy.allow_internet ? 
+                                  <CheckIcon color="success" fontSize="small" /> : 
+                                  <CloseIcon color="error" fontSize="small" />}
+                              </TableCell>
+                            </TableRow>
+                            <TableRow>
+                              <TableCell>Cluster Internal</TableCell>
+                              <TableCell>
+                                {environment.isolation.network_policy.allow_cluster_internal ? 
+                                  <CheckIcon color="success" fontSize="small" /> : 
+                                  <CloseIcon color="error" fontSize="small" />}
+                              </TableCell>
+                            </TableRow>
+                            {environment.isolation.network_policy.allowed_egress_cidrs && 
+                             environment.isolation.network_policy.allowed_egress_cidrs.length > 0 && (
+                              <TableRow>
+                                <TableCell>Allowed Egress CIDRs</TableCell>
+                                <TableCell>
+                                  {environment.isolation.network_policy.allowed_egress_cidrs.join(', ')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            {environment.isolation.network_policy.allowed_ingress_ports && 
+                             environment.isolation.network_policy.allowed_ingress_ports.length > 0 && (
+                              <TableRow>
+                                <TableCell>Allowed Ingress Ports</TableCell>
+                                <TableCell>
+                                  {environment.isolation.network_policy.allowed_ingress_ports.join(', ')}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </Grid>
+                    )}
+
+                    {/* Security Context */}
+                    {environment.isolation.security_context && (
+                      <Grid item xs={12} md={6}>
+                        <Typography variant="subtitle2" gutterBottom>Security Context</Typography>
+                        <Table size="small">
+                          <TableBody>
+                            {environment.isolation.security_context.run_as_user !== undefined && (
+                              <TableRow>
+                                <TableCell>Run as User</TableCell>
+                                <TableCell>{environment.isolation.security_context.run_as_user}</TableCell>
+                              </TableRow>
+                            )}
+                            {environment.isolation.security_context.run_as_group !== undefined && (
+                              <TableRow>
+                                <TableCell>Run as Group</TableCell>
+                                <TableCell>{environment.isolation.security_context.run_as_group}</TableCell>
+                              </TableRow>
+                            )}
+                            <TableRow>
+                              <TableCell>Run as Non-Root</TableCell>
+                              <TableCell>
+                                {environment.isolation.security_context.run_as_non_root ? 
+                                  <CheckIcon color="success" fontSize="small" /> : 
+                                  <CloseIcon color="error" fontSize="small" />}
+                              </TableCell>
+                            </TableRow>
+                            <TableRow>
+                              <TableCell>Read-Only Root FS</TableCell>
+                              <TableCell>
+                                {environment.isolation.security_context.read_only_root_filesystem ? 
+                                  <CheckIcon color="success" fontSize="small" /> : 
+                                  <CloseIcon color="error" fontSize="small" />}
+                              </TableCell>
+                            </TableRow>
+                            <TableRow>
+                              <TableCell>Allow Privilege Escalation</TableCell>
+                              <TableCell>
+                                {environment.isolation.security_context.allow_privilege_escalation ? 
+                                  <CheckIcon color="warning" fontSize="small" /> : 
+                                  <CloseIcon color="success" fontSize="small" />}
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      </Grid>
+                    )}
+                  </Grid>
+                </AccordionDetails>
+              </Accordion>
+            )}
           </Box>
         </TabPanel>
         <TabPanel value={tab} index={1}>
