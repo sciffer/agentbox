@@ -1,0 +1,44 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+{{- if .Values.api.enabled }}
+
+## API Backend
+
+The API backend is running and accessible at:
+{{- if .Values.ingress.enabled }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ (index .Values.ingress.hosts 0).host }}/api
+{{- else }}
+  kubectl port-forward svc/{{ include "agentbox.fullname" . }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
+  Then visit: http://localhost:{{ .Values.api.service.port }}
+{{- end }}
+
+{{- end }}
+
+{{- if .Values.ui.enabled }}
+
+## Web UI
+
+The Web UI is running and accessible at:
+{{- if .Values.ingress.enabled }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ (index .Values.ingress.hosts 0).host }}
+{{- else }}
+  kubectl port-forward svc/{{ include "agentbox.fullname" . }}-ui {{ .Values.ui.service.port }}:{{ .Values.ui.service.port }}
+  Then visit: http://localhost:{{ .Values.ui.service.port }}
+{{- end }}
+
+{{- end }}
+
+## Configuration
+
+To customize your installation, create a values file:
+
+  helm upgrade {{ .Release.Name }} agentbox -f my-values.yaml
+
+Important: Make sure to set a strong JWT secret in production:
+
+  secrets:
+    jwtSecret: "your-secure-secret-here"
+
+For more information, visit the project documentation.
