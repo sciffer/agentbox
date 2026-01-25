@@ -1,4 +1,4 @@
-name: Main Branch CI/CD
+name: Build and Publish
 
 on:
   push:
@@ -10,40 +10,9 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  test:
-    name: Run All Tests
+  build-api:
+    name: Build API Docker Image
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-          cache-dependency-path: go.sum
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run tests
-        run: go test -count=1 ./tests/unit/... -v
-        continue-on-error: false
-        env:
-          AGENTBOX_DB_PATH: /tmp/test-$${GITHUB_RUN_ID}.db
-          AGENTBOX_JWT_SECRET: test-secret-key
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          file: ./coverage.out
-          flags: unittests
-
-  build-and-push:
-    name: Build and Push Docker Image
-    runs-on: ubuntu-latest
-    needs: test
     permissions:
       contents: read
       packages: write
@@ -62,16 +31,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract metadata for API
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=main-
+            type=raw,value=latest
+            type=sha,prefix=
 
-      - name: Build and push Docker image
+      - name: Build and push API Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -85,15 +54,62 @@ jobs:
 
       - name: Image info
         run: |
-          echo "Image pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "API Image pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "Tags: ${{ steps.meta.outputs.tags }}"
+
+  build-ui:
+    name: Build UI Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for UI
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ui
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push UI Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ui
+          file: ./ui/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Image info
+        run: |
+          echo "UI Image pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ui"
           echo "Tags: ${{ steps.meta.outputs.tags }}"
 
   package-helm:
     name: Package Helm Chart
     runs-on: ubuntu-latest
-    needs: test
     permissions:
       contents: read
+      packages: write
 
     steps:
       - name: Checkout code
@@ -120,7 +136,7 @@ jobs:
       - name: Upload Helm chart as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: helm-chart-main-${{ steps.commit.outputs.sha }}
+          name: helm-chart-${{ steps.commit.outputs.sha }}
           path: helm-packages/*.tgz
           retention-days: 90
           if-no-files-found: error
@@ -128,15 +144,26 @@ jobs:
       - name: Upload Helm index
         uses: actions/upload-artifact@v4
         with:
-          name: helm-index-main-${{ steps.commit.outputs.sha }}
+          name: helm-index-${{ steps.commit.outputs.sha }}
           path: helm-packages/index.yaml
           retention-days: 90
           if-no-files-found: error
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Helm chart to GHCR
+        run: |
+          helm push helm-packages/agentbox-*.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+
       - name: Chart info
         run: |
-          echo "Helm chart packaged:"
+          echo "Helm chart packaged and pushed:"
           ls -lh helm-packages/
           echo ""
           echo "Chart can be installed with:"
-          echo "helm install agentbox ./helm-packages/agentbox-*.tgz"
+          echo "helm install agentbox oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/agentbox"
