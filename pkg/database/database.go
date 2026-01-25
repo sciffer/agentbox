@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/lib/pq"            // PostgreSQL driver
-	_ "modernc.org/sqlite"           // Pure Go SQLite driver (no CGO required)
+	_ "github.com/lib/pq" // PostgreSQL driver
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
 )
 
 // DB wraps a database connection with driver information
