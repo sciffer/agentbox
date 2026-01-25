@@ -34,14 +34,23 @@ describe('Layout', () => {
 
   it('renders the app title', () => {
     render(<Layout />)
-    expect(screen.getByText('AgentBox')).toBeInTheDocument()
+    // Use getAllByText since "AgentBox" appears multiple times (drawer + appbar)
+    const titles = screen.getAllByText(/AgentBox/i)
+    expect(titles.length).toBeGreaterThan(0)
   })
 
   it('renders navigation items', () => {
     render(<Layout />)
-    expect(screen.getByText('Dashboard')).toBeInTheDocument()
-    expect(screen.getByText('Environments')).toBeInTheDocument()
-    expect(screen.getByText('Users')).toBeInTheDocument()
+    // Navigation items appear in both temporary and permanent drawers
+    // Use getAllByText to handle multiple instances
+    const dashboardItems = screen.getAllByText('Dashboard')
+    expect(dashboardItems.length).toBeGreaterThan(0)
+    
+    const environmentItems = screen.getAllByText('Environments')
+    expect(environmentItems.length).toBeGreaterThan(0)
+    
+    const usersItems = screen.getAllByText('Users')
+    expect(usersItems.length).toBeGreaterThan(0)
   })
 
   it('renders the outlet for child routes', () => {
@@ -49,7 +58,7 @@ describe('Layout', () => {
     expect(screen.getByTestId('outlet')).toBeInTheDocument()
   })
 
-  it('displays user avatar', () => {
+  it('displays user avatar with first letter of username', () => {
     render(<Layout />)
     // The avatar should show 'T' for 'testuser'
     expect(screen.getByText('T')).toBeInTheDocument()

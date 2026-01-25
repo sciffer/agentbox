@@ -1,292 +1,123 @@
 # Default values for agentbox
 # This is a YAML-formatted file.
 
-# Image configuration
-image:
-  repository: agentbox
-  tag: "1.0.0"
-  pullPolicy: IfNotPresent
+# Global settings
+global:
+  imagePullSecrets: []
 
-# Service account configuration
-serviceAccount:
-  # Specifies whether a service account should be created
-  create: true
-  # Annotations to add to the service account
-  annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  name: ""
-
-# Pod security context
-podSecurityContext:
-  fsGroup: 1000
-  runAsNonRoot: true
-  runAsUser: 1000
-
-# Container security context
-securityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-    - ALL
-  readOnlyRootFilesystem: false
-  runAsNonRoot: true
-  runAsUser: 1000
-
-# Replica configuration
-replicaCount: 1
-
-# Resource limits and requests
-resources:
-  limits:
-    cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 100m
-    memory: 128Mi
-
-# Node selector
-nodeSelector: {}
-
-# Tolerations
-tolerations: []
-
-# Affinity
-affinity: {}
-
-# Pod annotations
-podAnnotations: {}
-
-# Pod labels
-podLabels: {}
-
-# Service configuration
-service:
-  type: ClusterIP
-  port: 8080
-  targetPort: 8080
-  annotations: {}
-
-# Ingress configuration
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: agentbox.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-  #  - secretName: agentbox-tls
-  #    hosts:
-  #      - agentbox.local
-
-# Application configuration
-config:
-  server:
+# API Backend configuration
+api:
+  enabled: true
+  replicaCount: 1
+  
+  image:
+    repository: agentbox/api
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
     port: 8080
-    host: "0.0.0.0"
-    log_level: "info"
-  
-  kubernetes:
-    kubeconfig: ""  # Empty means use in-cluster config
-    namespace_prefix: "agentbox-"
-    runtime_class: "gvisor"
-  
-  auth:
-    enabled: false
-    secret: ""  # Set via secret or environment variable
   
   resources:
-    default_cpu_limit: "1000m"
-    default_memory_limit: "1Gi"
-    default_storage_limit: "5Gi"
-    max_environments_per_user: 100
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
   
-  timeouts:
-    default_timeout: 3600
-    max_timeout: 86400
-    startup_timeout: 60
-
-# Environment variables (override config)
-env: []
-#  - name: AGENTBOX_LOG_LEVEL
-#    value: "debug"
-#  - name: AGENTBOX_AUTH_ENABLED
-#    value: "true"
-
-# Secrets configuration
-# These can reference existing Kubernetes secrets or be created via secret.yaml
-secrets:
-  # Database configuration
-  # If using PostgreSQL, set dbSecretName and dbSecretKey
-  # If using SQLite, set dbPath (or use default)
-  dbSecretName: ""  # Name of existing secret containing database DSN
-  dbSecretKey: "dsn"  # Key in secret containing PostgreSQL connection string
+  # Environment variables from secret
+  envFrom:
+    secretRef: agentbox-secrets
   
-  # Admin user configuration
-  adminSecretName: ""  # Name of existing secret containing admin credentials
-  adminUsernameKey: "username"  # Key for admin username
-  adminPasswordKey: "password"  # Key for admin password
-  adminEmailKey: "email"  # Key for admin email (optional)
+  # Additional environment variables
+  env:
+    LOG_LEVEL: info
+    LOG_FORMAT: json
+    SERVER_PORT: "8080"
+    DATABASE_PATH: /data/agentbox.db
   
-  # JWT configuration
-  jwtSecretName: ""  # Name of existing secret containing JWT secret
-  jwtSecretKey: "secret"  # Key in secret containing JWT signing secret
+  # Persistence for SQLite database
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 1Gi
   
-  # API Key prefix (optional, can be set via env var)
-  apiKeyPrefix: "ak_live_"
-  
-  # Metrics configuration
-  metricsEnabled: true
-  metricsCollectionInterval: "30s"
-  
-  # Google OAuth (optional)
-  googleOAuthSecretName: ""  # Name of existing secret containing OAuth credentials
-  googleClientIDKey: "client_id"
-  googleClientSecretKey: "client_secret"
-  
-  # Create secrets if not provided (set to false to use existing secrets only)
-  createSecrets: true
-  
-  # Values for secrets creation (only used if createSecrets is true)
-  # If you want to provide values directly (not recommended for production)
-  jwtSecret: ""  # If empty, will be auto-generated
-  dbDSN: ""  # PostgreSQL connection string (if using PostgreSQL)
-  dbPath: ""  # SQLite file path (if using SQLite, defaults to ./agentbox.db)
-  adminUsername: "admin"  # Default admin username
-  adminPassword: ""  # If empty, will be auto-generated
-  adminEmail: ""  # Optional admin email
-  jwtExpiry: "15m"  # JWT token expiry duration
-  googleClientID: ""  # Google OAuth client ID (optional)
-  googleClientSecret: ""  # Google OAuth client secret (optional)
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-# Liveness probe
-livenessProbe:
-  httpGet:
-    path: /api/v1/health
-    port: http
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
-
-# Readiness probe
-readinessProbe:
-  httpGet:
-    path: /api/v1/health
-    port: http
-  initialDelaySeconds: 10
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 3
-
-# Startup probe
-startupProbe:
-  httpGet:
-    path: /api/v1/health
-    port: http
-  initialDelaySeconds: 0
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 30
-
-# Autoscaling (optional)
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 80
-  targetMemoryUtilizationPercentage: 80
-
-# RBAC configuration
-rbac:
-  create: true
-  # ClusterRole is needed to create namespaces and manage resources
-  clusterRole:
-    create: true
-    rules:
-      - apiGroups: [""]
-        resources: ["namespaces", "pods", "pods/log", "pods/exec", "resourcequotas"]
-        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-      - apiGroups: ["networking.k8s.io"]
-        resources: ["networkpolicies"]
-        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-      - apiGroups: [""]
-        resources: ["nodes"]
-        verbs: ["get", "list", "watch"]
-
-# ServiceMonitor for Prometheus (optional)
-serviceMonitor:
-  enabled: false
-  interval: 30s
-  scrapeTimeout: 10s
-  labels: {}
-
-# UI Configuration
+# UI Frontend configuration
 ui:
   enabled: true
   replicaCount: 1
   
   image:
-    repository: agentbox-ui
-    tag: "1.0.0"
+    repository: agentbox/ui
+    tag: latest
     pullPolicy: IfNotPresent
   
-  # Enable Google OAuth in UI
-  googleOAuthEnabled: false
+  service:
+    type: ClusterIP
+    port: 80
   
-  # Pod security context
-  podSecurityContext:
-    fsGroup: 101
-    runAsNonRoot: true
-    runAsUser: 101
-  
-  # Container security context
-  securityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-      - ALL
-    readOnlyRootFilesystem: false
-    runAsNonRoot: true
-    runAsUser: 101
-  
-  # Resources
   resources:
     limits:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 200m
+      memory: 256Mi
     requests:
       cpu: 50m
       memory: 64Mi
   
-  # Service
-  service:
-    type: ClusterIP
-    port: 3000
+  # Environment variables
+  env:
+    API_URL: http://agentbox-api:8080
   
-  # Ingress
-  ingress:
-    enabled: false
-    className: ""
-    annotations: {}
-    hosts:
-      - host: ui.agentbox.local
-        paths:
-          - path: /
-            pathType: Prefix
-    tls: []
-  
-  # Node selector
   nodeSelector: {}
-  
-  # Tolerations
   tolerations: []
-  
-  # Affinity
   affinity: {}
-  
-  # Pod annotations
-  podAnnotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: agentbox.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: ui
+        - path: /api
+          pathType: Prefix
+          service: api
+  tls: []
+  #  - secretName: agentbox-tls
+  #    hosts:
+  #      - agentbox.local
+
+# Secret configuration
+secrets:
+  # Set to false if you want to create secrets manually
+  create: true
+  # JWT secret for authentication
+  jwtSecret: "change-me-in-production"
+  # Google OAuth credentials (optional)
+  googleClientId: ""
+  googleClientSecret: ""
+  # Database password (for PostgreSQL)
+  databasePassword: ""
+
+# ServiceAccount configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC configuration for managing sandbox pods
+rbac:
+  create: true

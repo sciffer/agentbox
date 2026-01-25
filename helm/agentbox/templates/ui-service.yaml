@@ -4,8 +4,7 @@ kind: Service
 metadata:
   name: {{ include "agentbox.fullname" . }}-ui
   labels:
-    {{- include "agentbox.labels" . | nindent 4 }}
-    app.kubernetes.io/component: ui
+    {{- include "agentbox.ui.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.ui.service.type }}
   ports:
@@ -14,6 +13,5 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "agentbox.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: ui
+    {{- include "agentbox.ui.selectorLabels" . | nindent 4 }}
 {{- end }}

@@ -1,4 +1,4 @@
-{{- if .Values.ingress.enabled -}}
+{{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -33,9 +33,15 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "agentbox.fullname" $ }}
+                {{- if eq .service "api" }}
+                name: {{ include "agentbox.fullname" $ }}-api
                 port:
-                  number: {{ $.Values.service.port }}
+                  number: {{ $.Values.api.service.port }}
+                {{- else }}
+                name: {{ include "agentbox.fullname" $ }}-ui
+                port:
+                  number: {{ $.Values.ui.service.port }}
+                {{- end }}
           {{- end }}
     {{- end }}
 {{- end }}
