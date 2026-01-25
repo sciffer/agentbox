@@ -41,7 +41,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Role != "super_admin" && user.Role != "admin" {
+	if user.Role != users.RoleSuperAdmin && user.Role != users.RoleAdmin {
 		h.respondError(w, http.StatusForbidden, "insufficient permissions", nil)
 		return
 	}
@@ -85,7 +85,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Role != "super_admin" && user.Role != "admin" {
+	if user.Role != users.RoleSuperAdmin && user.Role != users.RoleAdmin {
 		h.respondError(w, http.StatusForbidden, "insufficient permissions", nil)
 		return
 	}
@@ -148,7 +148,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Users can only view their own profile unless they're admin
-	if user.ID != userID && user.Role != "super_admin" && user.Role != "admin" {
+	if user.ID != userID && user.Role != users.RoleSuperAdmin && user.Role != users.RoleAdmin {
 		h.respondError(w, http.StatusForbidden, "insufficient permissions", nil)
 		return
 	}

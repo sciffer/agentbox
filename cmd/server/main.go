@@ -47,7 +47,8 @@ func run() error {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 	defer func() {
-		_ = log.Sync() // Best effort sync on shutdown
+		//nolint:errcheck // Best effort sync on shutdown, ignore error
+		log.Sync()
 	}()
 
 	log.Info("starting agentbox server", zap.String("version", "1.0.0"))
