@@ -36,8 +36,8 @@ func TestListAPIKeysAPIRoute(t *testing.T) {
 		err := json.NewDecoder(rr.Body).Decode(&resp)
 		require.NoError(t, err)
 
-		// Should be empty or nil (no keys created yet)
-		assert.True(t, resp.APIKeys == nil || len(resp.APIKeys) == 0)
+		// Should be empty (no keys created yet)
+		assert.Empty(t, resp.APIKeys)
 	})
 
 	t.Run("unauthenticated request fails", func(t *testing.T) {
