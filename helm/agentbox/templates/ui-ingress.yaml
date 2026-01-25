@@ -1,21 +1,22 @@
-{{- if .Values.ingress.enabled }}
+{{- if and .Values.ui.enabled .Values.ui.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "agentbox.fullname" . }}
+  name: {{ include "agentbox.fullname" . }}-ui
   labels:
     {{- include "agentbox.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+    app.kubernetes.io/component: ui
+  {{- with .Values.ui.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if .Values.ingress.className }}
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ui.ingress.className }}
+  ingressClassName: {{ .Values.ui.ingress.className }}
   {{- end }}
-  {{- if .Values.ingress.tls }}
+  {{- if .Values.ui.ingress.tls }}
   tls:
-    {{- range .Values.ingress.tls }}
+    {{- range .Values.ui.ingress.tls }}
     - hosts:
         {{- range .hosts }}
         - {{ . | quote }}
@@ -24,7 +25,7 @@ spec:
     {{- end }}
   {{- end }}
   rules:
-    {{- range .Values.ingress.hosts }}
+    {{- range .Values.ui.ingress.hosts }}
     - host: {{ .host | quote }}
       http:
         paths:
@@ -33,15 +34,9 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                {{- if eq .service "api" }}
-                name: {{ include "agentbox.fullname" $ }}-api
-                port:
-                  number: {{ $.Values.api.service.port }}
-                {{- else }}
                 name: {{ include "agentbox.fullname" $ }}-ui
                 port:
                   number: {{ $.Values.ui.service.port }}
-                {{- end }}
           {{- end }}
     {{- end }}
 {{- end }}

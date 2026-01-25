@@ -1,31 +1,36 @@
 {{- if .Values.rbac.create }}
-{{- if .Values.rbac.clusterRole.create }}
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
-  name: {{ include "agentbox.fullname" . }}
+  name: {{ include "agentbox.fullname" . }}-sandbox-manager
   labels:
     {{- include "agentbox.labels" . | nindent 4 }}
 rules:
-  {{- range .Values.rbac.clusterRole.rules }}
-  - apiGroups: {{ .apiGroups | toYaml | nindent 4 }}
-    resources: {{ .resources | toYaml | nindent 4 }}
-    verbs: {{ .verbs | toYaml | nindent 4 }}
-  {{- end }}
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "delete", "get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: {{ include "agentbox.fullname" . }}
+  name: {{ include "agentbox.fullname" . }}-sandbox-manager
   labels:
     {{- include "agentbox.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "agentbox.fullname" . }}
+  kind: Role
+  name: {{ include "agentbox.fullname" . }}-sandbox-manager
 subjects:
   - kind: ServiceAccount
     name: {{ include "agentbox.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
-{{- end }}
 {{- end }}

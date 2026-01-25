@@ -7,8 +7,6 @@ Expand the name of the chart.
 
 {{/*
 Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
 */}}
 {{- define "agentbox.fullname" -}}
 {{- if .Values.fullnameOverride }}
@@ -51,6 +49,38 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+API labels
+*/}}
+{{- define "agentbox.api.labels" -}}
+{{ include "agentbox.labels" . }}
+app.kubernetes.io/component: api
+{{- end }}
+
+{{/*
+API selector labels
+*/}}
+{{- define "agentbox.api.selectorLabels" -}}
+{{ include "agentbox.selectorLabels" . }}
+app.kubernetes.io/component: api
+{{- end }}
+
+{{/*
+UI labels
+*/}}
+{{- define "agentbox.ui.labels" -}}
+{{ include "agentbox.labels" . }}
+app.kubernetes.io/component: ui
+{{- end }}
+
+{{/*
+UI selector labels
+*/}}
+{{- define "agentbox.ui.selectorLabels" -}}
+{{ include "agentbox.selectorLabels" . }}
+app.kubernetes.io/component: ui
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "agentbox.serviceAccountName" -}}
@@ -59,4 +89,11 @@ Create the name of the service account to use
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
+{{- end }}
+
+{{/*
+Secret name
+*/}}
+{{- define "agentbox.secretName" -}}
+{{- printf "%s-secrets" (include "agentbox.fullname" .) }}
 {{- end }}

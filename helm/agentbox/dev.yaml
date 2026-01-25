@@ -1,0 +1,9 @@
+# Default values for agentbox
+# This is a YAML-formatted file.
+
+# Image configuration
+image:
+  repository: ghcr.io/sciffer/agentbox
+  tag: "main-17bfa9a"
+  pullPolicy: IfNotPresent
+
