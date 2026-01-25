@@ -18,6 +18,7 @@ import (
 	"github.com/sciffer/agentbox/pkg/api"
 	"github.com/sciffer/agentbox/pkg/auth"
 	"github.com/sciffer/agentbox/pkg/database"
+	"github.com/sciffer/agentbox/pkg/permissions"
 	"github.com/sciffer/agentbox/pkg/users"
 )
 
@@ -80,11 +81,12 @@ func setupFullAPITest(t *testing.T) (*mux.Router, *database.DB, *auth.Service, *
 	log, _ := logger.NewDevelopment()
 	userService := users.NewService(db, zapLogger)
 	authService := auth.NewService(db, userService, zapLogger)
+	permissionService := permissions.NewService(db, zapLogger)
 
 	// Create handlers
 	authHandler := api.NewAuthHandler(authService, userService, log)
 	userHandler := api.NewUserHandler(userService, authService, log)
-	apiKeyHandler := api.NewAPIKeyHandler(authService, log)
+	apiKeyHandler := api.NewAPIKeyHandler(authService, permissionService, log)
 
 	// Create router with auth routes
 	router := mux.NewRouter()

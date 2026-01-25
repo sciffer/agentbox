@@ -137,8 +137,26 @@ func (db *DB) Migrate() error {
 func getMigrations() map[int]string {
 	return map[int]string{
 		1: initialSchema,
+		2: apiKeyPermissionsSchema,
 	}
 }
+
+// apiKeyPermissionsSchema adds API key permissions table
+const apiKeyPermissionsSchema = `
+-- API Key Permissions table (for environment-scoped API keys)
+CREATE TABLE IF NOT EXISTS api_key_permissions (
+    id TEXT PRIMARY KEY,
+    api_key_id TEXT NOT NULL,
+    environment_id VARCHAR(255) NOT NULL,
+    permission VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE,
+    UNIQUE(api_key_id, environment_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_perms_key_id ON api_key_permissions(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_api_key_perms_env_id ON api_key_permissions(environment_id);
+`
 
 // initialSchema is the initial database schema
 const initialSchema = `

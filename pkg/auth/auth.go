@@ -235,21 +235,35 @@ func (s *Service) generateToken(user *users.User) (string, time.Time, error) {
 	return tokenString, expiresAt, nil
 }
 
+// APIKeyPermissionRequest represents an environment permission for API key creation
+type APIKeyPermissionRequest struct {
+	EnvironmentID string `json:"environment_id"`
+	Permission    string `json:"permission"`
+}
+
 // CreateAPIKeyRequest is the request to create an API key
 type CreateAPIKeyRequest struct {
 	UserID      string
 	Description string
 	ExpiresAt   *time.Time
+	Permissions []APIKeyPermissionRequest // Environment-specific permissions
+}
+
+// APIKeyPermissionResponse represents an environment permission in responses
+type APIKeyPermissionResponse struct {
+	EnvironmentID string `json:"environment_id"`
+	Permission    string `json:"permission"`
 }
 
 // APIKeyResponse is the response when creating an API key
 type APIKeyResponse struct {
-	ID          string     `json:"id"`
-	Key         string     `json:"key"` // Only shown once on creation
-	KeyPrefix   string     `json:"key_prefix"`
-	Description string     `json:"description"`
-	CreatedAt   time.Time  `json:"created_at"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	ID          string                     `json:"id"`
+	Key         string                     `json:"key"` // Only shown once on creation
+	KeyPrefix   string                     `json:"key_prefix"`
+	Description string                     `json:"description"`
+	CreatedAt   time.Time                  `json:"created_at"`
+	ExpiresAt   *time.Time                 `json:"expires_at,omitempty"`
+	Permissions []APIKeyPermissionResponse `json:"permissions,omitempty"`
 }
 
 // CreateAPIKey creates a new API key for a user

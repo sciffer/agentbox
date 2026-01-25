@@ -357,3 +357,141 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword string
 
 	return nil
 }
+
+// UpdateUserRequest is the request to update a user
+type UpdateUserRequest struct {
+	Username *string `json:"username,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Role     *string `json:"role,omitempty"`
+	Status   *string `json:"status,omitempty"`
+	Password *string `json:"password,omitempty"`
+}
+
+// UpdateUser updates a user's information
+func (s *Service) UpdateUser(ctx context.Context, userID string, req *UpdateUserRequest) (*User, error) {
+	// Verify user exists
+	_, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build dynamic update query
+	updates := []string{}
+	args := []interface{}{}
+	argIdx := 1
+
+	if req.Username != nil {
+		updates = append(updates, fmt.Sprintf("username = $%d", argIdx))
+		args = append(args, *req.Username)
+		argIdx++
+	}
+
+	if req.Email != nil {
+		if *req.Email == "" {
+			updates = append(updates, fmt.Sprintf("email = $%d", argIdx))
+			args = append(args, sql.NullString{})
+		} else {
+			updates = append(updates, fmt.Sprintf("email = $%d", argIdx))
+			args = append(args, *req.Email)
+		}
+		argIdx++
+	}
+
+	if req.Role != nil {
+		// Validate role
+		if *req.Role != RoleUser && *req.Role != RoleAdmin && *req.Role != RoleSuperAdmin {
+			return nil, fmt.Errorf("invalid role: %s", *req.Role)
+		}
+		updates = append(updates, fmt.Sprintf("role = $%d", argIdx))
+		args = append(args, *req.Role)
+		argIdx++
+	}
+
+	if req.Status != nil {
+		// Validate status
+		if *req.Status != StatusActive && *req.Status != StatusInactive {
+			return nil, fmt.Errorf("invalid status: %s", *req.Status)
+		}
+		updates = append(updates, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, *req.Status)
+		argIdx++
+	}
+
+	if req.Password != nil && *req.Password != "" {
+		hash, err := hashPassword(*req.Password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", err)
+		}
+		updates = append(updates, fmt.Sprintf("password_hash = $%d", argIdx))
+		args = append(args, hash)
+		argIdx++
+	}
+
+	if len(updates) == 0 {
+		return s.GetUserByID(ctx, userID)
+	}
+
+	// Always update the updated_at timestamp
+	updates = append(updates, "updated_at = CURRENT_TIMESTAMP")
+
+	// Build and execute query
+	query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d",
+		joinStrings(updates, ", "), argIdx)
+	args = append(args, userID)
+
+	_, err = s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update user: %w", err)
+	}
+
+	return s.GetUserByID(ctx, userID)
+}
+
+// DeleteUser deletes a user by ID
+// Note: This will cascade delete all related records (API keys, permissions)
+func (s *Service) DeleteUser(ctx context.Context, userID string) error {
+	// Verify user exists
+	_, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.ExecContext(ctx, "DELETE FROM users WHERE id = $1", userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	s.logger.Info("user deleted", zap.String("user_id", userID))
+	return nil
+}
+
+// GetUserCount returns the total number of users
+func (s *Service) GetUserCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count users: %w", err)
+	}
+	return count, nil
+}
+
+// joinStrings joins strings with a separator (simple helper to avoid importing strings package)
+func joinStrings(strs []string, sep string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	result := strs[0]
+	for i := 1; i < len(strs); i++ {
+		result += sep + strs[i]
+	}
+	return result
+}

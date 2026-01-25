@@ -1,6 +1,13 @@
 import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '../store/authStore'
-import { CreateEnvironmentData, CreateUserData } from '../types'
+import { 
+  CreateEnvironmentData, 
+  CreateUserData, 
+  UpdateUserData, 
+  GrantPermissionData,
+  CreateAPIKeyData,
+  APIKeyPermission
+} from '../types'
 
 // Runtime config from window.AGENTBOX_CONFIG (set by Docker entrypoint)
 // Falls back to build-time env var, then to relative path for API proxy
@@ -127,6 +134,29 @@ export const usersAPI = {
     const response = await apiClient.post('/users', data)
     return response.data
   },
+  update: async (id: string, data: UpdateUserData) => {
+    const response = await apiClient.put(`/users/${id}`, data)
+    return response.data
+  },
+  delete: async (id: string) => {
+    await apiClient.delete(`/users/${id}`)
+  },
+  // Permission methods
+  listPermissions: async (userId: string) => {
+    const response = await apiClient.get(`/users/${userId}/permissions`)
+    return response.data
+  },
+  grantPermission: async (userId: string, data: GrantPermissionData) => {
+    const response = await apiClient.post(`/users/${userId}/permissions`, data)
+    return response.data
+  },
+  updatePermission: async (userId: string, envId: string, permission: string) => {
+    const response = await apiClient.put(`/users/${userId}/permissions/${envId}`, { permission })
+    return response.data
+  },
+  revokePermission: async (userId: string, envId: string) => {
+    await apiClient.delete(`/users/${userId}/permissions/${envId}`)
+  },
 }
 
 // API Keys API
@@ -135,15 +165,23 @@ export const apiKeysAPI = {
     const response = await apiClient.get('/api-keys')
     return response.data
   },
-  create: async (description?: string, expiresIn?: number) => {
+  create: async (data: CreateAPIKeyData) => {
     const response = await apiClient.post('/api-keys', {
-      description,
-      expires_in: expiresIn,
+      description: data.description,
+      expires_in: data.expires_in,
+      permissions: data.permissions?.map((p: APIKeyPermission) => ({
+        environment_id: p.environment_id,
+        permission: p.permission,
+      })),
     })
     return response.data
   },
   revoke: async (id: string) => {
     await apiClient.delete(`/api-keys/${id}`)
+  },
+  listPermissions: async (id: string) => {
+    const response = await apiClient.get(`/api-keys/${id}/permissions`)
+    return response.data
   },
 }
 

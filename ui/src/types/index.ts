@@ -24,14 +24,33 @@ export interface Environment {
   terminated_at?: string
 }
 
+export interface EnvironmentPermission {
+  id: string
+  user_id: string
+  environment_id: string
+  permission: 'viewer' | 'editor' | 'owner'
+  granted_by?: string
+  granted_at: string
+}
+
+export interface APIKeyPermission {
+  id?: string
+  api_key_id?: string
+  environment_id: string
+  permission: 'viewer' | 'editor' | 'owner'
+  created_at?: string
+}
+
 export interface APIKey {
   id: string
+  key?: string // Only returned on creation
   key_prefix: string
   description?: string
   created_at: string
   last_used?: string
   expires_at?: string
   revoked_at?: string
+  permissions?: APIKeyPermission[]
 }
 
 export interface Metric {
@@ -65,7 +84,21 @@ export interface CreateUserData {
   status: string
 }
 
+export interface UpdateUserData {
+  username?: string
+  email?: string
+  password?: string
+  role?: string
+  status?: string
+}
+
+export interface GrantPermissionData {
+  environment_id: string
+  permission: 'viewer' | 'editor' | 'owner'
+}
+
 export interface CreateAPIKeyData {
   description?: string
-  expiresIn?: number
+  expires_in?: number
+  permissions?: APIKeyPermission[]
 }

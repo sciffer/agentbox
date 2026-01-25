@@ -20,6 +20,7 @@ import (
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/metrics"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
+	"github.com/sciffer/agentbox/pkg/permissions"
 	"github.com/sciffer/agentbox/pkg/proxy"
 	"github.com/sciffer/agentbox/pkg/users"
 	"github.com/sciffer/agentbox/pkg/validator"
@@ -77,6 +78,9 @@ func run() error {
 	// Initialize auth service
 	authService := auth.NewService(db, userService, log.Logger)
 
+	// Initialize permission service
+	permissionService := permissions.NewService(db, log.Logger)
+
 	// Initialize Kubernetes client
 	k8sClient, err := k8s.NewClient(cfg.Kubernetes.Kubeconfig)
 	if err != nil {
@@ -119,18 +123,20 @@ func run() error {
 	handler := api.NewHandler(orch, val, log)
 	authHandler := api.NewAuthHandler(authService, userService, log)
 	userHandler := api.NewUserHandler(userService, authService, log)
-	apiKeyHandler := api.NewAPIKeyHandler(authService, log)
+	apiKeyHandler := api.NewAPIKeyHandler(authService, permissionService, log)
 	metricsHandler := api.NewMetricsHandler(db, log)
+	permissionHandler := api.NewPermissionHandler(permissionService, userService, log)
 
 	// Create router with full configuration
 	routerConfig := &api.RouterConfig{
-		Handler:        handler,
-		AuthHandler:    authHandler,
-		UserHandler:    userHandler,
-		APIKeyHandler:  apiKeyHandler,
-		MetricsHandler: metricsHandler,
-		ProxyHandler:   proxyHandler,
-		AuthService:    authService,
+		Handler:           handler,
+		AuthHandler:       authHandler,
+		UserHandler:       userHandler,
+		APIKeyHandler:     apiKeyHandler,
+		MetricsHandler:    metricsHandler,
+		PermissionHandler: permissionHandler,
+		ProxyHandler:      proxyHandler,
+		AuthService:       authService,
 	}
 	router := api.NewRouter(routerConfig)
 
