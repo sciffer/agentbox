@@ -326,3 +326,301 @@ func TestValidateExecRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateNodeSelector(t *testing.T) {
+	v := validator.New(10000, 10*1024*1024*1024, 100*1024*1024*1024, 86400)
+
+	tests := []struct {
+		name        string
+		request     models.CreateEnvironmentRequest
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid node selector",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				NodeSelector: map[string]string{
+					"kubernetes.io/arch": "amd64",
+					"node-type":          "compute",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "empty node selector key",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				NodeSelector: map[string]string{
+					"": "value",
+				},
+			},
+			expectError: true,
+			errorMsg:    "node selector key cannot be empty",
+		},
+		{
+			name: "node selector with nil map (valid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				NodeSelector: nil,
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := v.ValidateCreateRequest(&tt.request)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateTolerations(t *testing.T) {
+	v := validator.New(10000, 10*1024*1024*1024, 100*1024*1024*1024, 86400)
+
+	tests := []struct {
+		name        string
+		request     models.CreateEnvironmentRequest
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid toleration with Equal operator",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:      "dedicated",
+						Operator: "Equal",
+						Value:    "agents",
+						Effect:   "NoSchedule",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid toleration with Exists operator",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:      "node.kubernetes.io/not-ready",
+						Operator: "Exists",
+						Effect:   "NoExecute",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid toleration with tolerationSeconds",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:               "node.kubernetes.io/unreachable",
+						Operator:          "Exists",
+						Effect:            "NoExecute",
+						TolerationSeconds: ptr(int64(300)),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid operator",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:      "dedicated",
+						Operator: "Invalid",
+						Value:    "agents",
+						Effect:   "NoSchedule",
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "operator must be 'Exists' or 'Equal'",
+		},
+		{
+			name: "invalid effect",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:      "dedicated",
+						Operator: "Equal",
+						Value:    "agents",
+						Effect:   "InvalidEffect",
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "effect must be",
+		},
+		{
+			name: "Exists operator with value (invalid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:      "dedicated",
+						Operator: "Exists",
+						Value:    "should-be-empty",
+						Effect:   "NoSchedule",
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "value must be empty when operator is 'Exists'",
+		},
+		{
+			name: "tolerationSeconds without NoExecute effect (invalid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:               "dedicated",
+						Operator:          "Equal",
+						Value:             "agents",
+						Effect:            "NoSchedule",
+						TolerationSeconds: ptr(int64(300)),
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "tolerationSeconds can only be set when effect is 'NoExecute'",
+		},
+		{
+			name: "multiple valid tolerations",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: []models.Toleration{
+					{
+						Key:      "dedicated",
+						Operator: "Equal",
+						Value:    "agents",
+						Effect:   "NoSchedule",
+					},
+					{
+						Key:      "gpu",
+						Operator: "Exists",
+						Effect:   "NoSchedule",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "nil tolerations (valid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Tolerations: nil,
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := v.ValidateCreateRequest(&tt.request)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// ptr is a helper function to create a pointer to an int64
+func ptr(i int64) *int64 {
+	return &i
+}
