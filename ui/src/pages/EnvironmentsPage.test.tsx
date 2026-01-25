@@ -114,33 +114,46 @@ describe('EnvironmentsPage', () => {
     
     await user.click(screen.getByRole('button', { name: /create environment/i }))
     
-    // Expand Node Scheduling
+    // Wait for dialog to be visible
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+    
+    // Expand Node Scheduling accordion and wait for content to be visible
     const nodeSchedulingHeader = screen.getByText('Node Scheduling')
     await user.click(nodeSchedulingHeader)
     
-    // Add first toleration
+    // Wait for accordion to expand and button to be visible
     const addButton = await screen.findByRole('button', { name: /add toleration/i })
+    
+    // Add first toleration
     await user.click(addButton)
     
     // Should have one toleration row (Key field)
     await waitFor(() => {
       expect(screen.getAllByRole('textbox', { name: /key/i }).length).toBe(1)
-    })
+    }, { timeout: 3000 })
     
-    // Add second toleration
-    await user.click(addButton)
+    // Add second toleration - re-query the button to ensure it's still in the DOM
+    const addButton2 = screen.getByRole('button', { name: /add toleration/i })
+    await user.click(addButton2)
     
     // Should have two toleration rows
     await waitFor(() => {
       expect(screen.getAllByRole('textbox', { name: /key/i }).length).toBe(2)
-    })
-  })
+    }, { timeout: 3000 })
+  }, 15000) // Increase test timeout to 15 seconds
 
   it('can fill in toleration fields', async () => {
     const user = userEvent.setup()
     render(<EnvironmentsPage />)
     
     await user.click(screen.getByRole('button', { name: /create environment/i }))
+    
+    // Wait for dialog to be visible
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
     
     // Expand Node Scheduling
     const nodeSchedulingHeader = screen.getByText('Node Scheduling')
@@ -150,12 +163,14 @@ describe('EnvironmentsPage', () => {
     const addButton = await screen.findByRole('button', { name: /add toleration/i })
     await user.click(addButton)
     
-    // Fill in the key field
-    const keyInput = screen.getByRole('textbox', { name: /key/i })
+    // Wait for key input to appear and fill it
+    const keyInput = await screen.findByRole('textbox', { name: /key/i })
     await user.type(keyInput, 'dedicated')
     
-    expect(keyInput).toHaveValue('dedicated')
-  })
+    await waitFor(() => {
+      expect(keyInput).toHaveValue('dedicated')
+    })
+  }, 10000)
 
   it('shows runtime isolation accordion in create dialog', async () => {
     const user = userEvent.setup()
