@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/lib/pq"           // PostgreSQL driver
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
+	_ "github.com/lib/pq"            // PostgreSQL driver
+	_ "modernc.org/sqlite"           // Pure Go SQLite driver (no CGO required)
 	"go.uber.org/zap"
 )
 
@@ -38,12 +38,13 @@ func NewDB(logger *zap.Logger) (*DB, error) {
 		}
 		logger.Info("connected to PostgreSQL database")
 	} else {
-		// SQLite (default for testing)
+		// SQLite (default for development/testing)
 		if dbPath == "" {
 			dbPath = "./agentbox.db"
 		}
-		db, err = sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
-		driver = "sqlite3"
+		// modernc.org/sqlite uses "sqlite" as driver name and different pragma syntax
+		db, err = sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
+		driver = "sqlite"
 		if err != nil {
 			return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 		}
