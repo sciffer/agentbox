@@ -75,6 +75,23 @@ ui:
   env:
     API_URL: http://agentbox-api:8080
   
+  # UI Ingress configuration
+  ingress:
+    enabled: false
+    className: nginx
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: ui.agentbox.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    #  - secretName: agentbox-ui-tls
+    #    hosts:
+    #      - ui.agentbox.local
+  
   nodeSelector: {}
   tolerations: []
   affinity: {}
