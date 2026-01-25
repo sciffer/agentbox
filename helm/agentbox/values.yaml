@@ -31,12 +31,39 @@ api:
   envFrom:
     secretRef: agentbox-secrets
   
-  # Additional environment variables
+  # Additional environment variables (non-secret configuration)
   env:
-    LOG_LEVEL: info
-    LOG_FORMAT: json
-    SERVER_PORT: "8080"
-    DATABASE_PATH: /data/agentbox.db
+    # Server configuration
+    AGENTBOX_HOST: "0.0.0.0"
+    AGENTBOX_PORT: "8080"
+    AGENTBOX_LOG_LEVEL: "info"
+    
+    # Database configuration (SQLite by default)
+    AGENTBOX_DB_PATH: "/data/agentbox.db"
+    
+    # Kubernetes configuration
+    AGENTBOX_NAMESPACE_PREFIX: "agentbox-"
+    AGENTBOX_RUNTIME_CLASS: ""  # e.g., "gvisor" for enhanced isolation
+    
+    # Authentication configuration
+    AGENTBOX_AUTH_ENABLED: "true"
+    AGENTBOX_JWT_EXPIRY: "24h"
+    AGENTBOX_API_KEY_PREFIX: "ak_"
+    
+    # Resource limits for sandbox environments
+    AGENTBOX_DEFAULT_CPU_LIMIT: "1000m"
+    AGENTBOX_DEFAULT_MEMORY_LIMIT: "512Mi"
+    AGENTBOX_DEFAULT_STORAGE_LIMIT: "1Gi"
+    AGENTBOX_MAX_ENVIRONMENTS_PER_USER: "10"
+    
+    # Timeout configuration (in seconds)
+    AGENTBOX_DEFAULT_TIMEOUT: "3600"
+    AGENTBOX_MAX_TIMEOUT: "86400"
+    AGENTBOX_STARTUP_TIMEOUT: "300"
+    
+    # Metrics configuration
+    AGENTBOX_METRICS_ENABLED: "true"
+    AGENTBOX_METRICS_COLLECTION_INTERVAL: "30s"
   
   # Persistence for SQLite database
   persistence:
@@ -71,9 +98,14 @@ ui:
       cpu: 50m
       memory: 64Mi
   
-  # Environment variables
+  # Environment variables for UI
   env:
-    API_URL: http://agentbox-api:8080
+    # Backend API URL (internal service URL)
+    API_URL: "http://agentbox-api:8080"
+    # WebSocket URL (optional, defaults to same as API_URL)
+    # VITE_WS_URL: "ws://agentbox-api:8080"
+    # Enable Google OAuth button in UI
+    # VITE_GOOGLE_OAUTH_ENABLED: "false"
   
   # UI Ingress configuration
   ingress:
@@ -96,7 +128,7 @@ ui:
   tolerations: []
   affinity: {}
 
-# Ingress configuration
+# Combined Ingress configuration (routes both UI and API)
 ingress:
   enabled: false
   className: nginx
@@ -121,13 +153,24 @@ ingress:
 secrets:
   # Set to false if you want to create secrets manually
   create: true
-  # JWT secret for authentication
+  
+  # Required: JWT secret for authentication tokens
   jwtSecret: "change-me-in-production"
+  
+  # Admin credentials (optional - defaults will be used if not set)
+  adminUsername: ""      # Defaults to "admin"
+  adminPassword: ""      # Auto-generated if not set
+  adminEmail: ""         # Optional admin email
+  
   # Google OAuth credentials (optional)
   googleClientId: ""
   googleClientSecret: ""
-  # Database password (for PostgreSQL)
-  databasePassword: ""
+  
+  # Database configuration (optional)
+  # For PostgreSQL: set databaseDSN to connection string
+  # For SQLite: leave empty and set api.env.AGENTBOX_DB_PATH
+  databaseDSN: ""        # e.g., "postgresql://user:pass@host:5432/agentbox?sslmode=require"
+  databasePassword: ""   # Alternative: just the password for PostgreSQL
 
 # ServiceAccount configuration
 serviceAccount:
