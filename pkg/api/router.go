@@ -50,7 +50,10 @@ func NewRouter(configOrHandler interface{}, proxyHandlerOrNil ...*proxy.Proxy) *
 	}
 
 	// New signature: NewRouter(config)
-	config := configOrHandler.(*RouterConfig)
+	config, ok := configOrHandler.(*RouterConfig)
+	if !ok {
+		panic("NewRouter: expected *Handler or *RouterConfig")
+	}
 
 	// Public routes (no auth required)
 	api.HandleFunc("/health", config.Handler.HealthCheck).Methods("GET")

@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios'
 import { useAuthStore } from '../store/authStore'
+import { CreateEnvironmentData, CreateUserData } from '../types'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'
 
@@ -67,7 +68,7 @@ export const environmentsAPI = {
     const response = await apiClient.get(`/environments/${id}`)
     return response.data
   },
-  create: async (data: any) => {
+  create: async (data: CreateEnvironmentData) => {
     const response = await apiClient.post('/environments', data)
     return response.data
   },
@@ -97,7 +98,7 @@ export const usersAPI = {
     const response = await apiClient.get(`/users/${id}`)
     return response.data
   },
-  create: async (data: any) => {
+  create: async (data: CreateUserData) => {
     const response = await apiClient.post('/users', data)
     return response.data
   },
@@ -109,7 +110,7 @@ export const apiKeysAPI = {
     const response = await apiClient.get('/api-keys')
     return response.data
   },
-  create: async (description: string, expiresIn?: number) => {
+  create: async (description?: string, expiresIn?: number) => {
     const response = await apiClient.post('/api-keys', {
       description,
       expires_in: expiresIn,

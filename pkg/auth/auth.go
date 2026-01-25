@@ -77,7 +77,7 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest) (*LoginResponse,
 	}
 
 	// Check if user is active
-	if user.Status != "active" {
+	if user.Status != users.StatusActive {
 		return nil, fmt.Errorf("user account is not active")
 	}
 
@@ -90,8 +90,10 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest) (*LoginResponse,
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// Update last login
-	_ = s.userService.UpdateLastLogin(ctx, user.ID)
+	// Update last login (best effort, don't fail login if this fails)
+	if err := s.userService.UpdateLastLogin(ctx, user.ID); err != nil {
+		s.logger.Warn("failed to update last login", zap.String("user_id", user.ID), zap.Error(err))
+	}
 
 	// Generate JWT token
 	token, expiresAt, err := s.generateToken(user)
@@ -174,12 +176,14 @@ func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*users.Use
 		return nil, fmt.Errorf("API key has expired")
 	}
 
-	// Update last_used timestamp
-	_, _ = s.db.ExecContext(ctx, `
+	// Update last_used timestamp (best effort)
+	if _, err := s.db.ExecContext(ctx, `
 		UPDATE api_keys
 		SET last_used = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, key.ID)
+	`, key.ID); err != nil {
+		s.logger.Warn("failed to update API key last_used", zap.String("key_id", key.ID), zap.Error(err))
+	}
 
 	// Get user
 	user, err := s.userService.GetUserByID(ctx, key.UserID)
@@ -188,7 +192,7 @@ func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*users.Use
 	}
 
 	// Check if user is active
-	if user.Status != "active" {
+	if user.Status != users.StatusActive {
 		return nil, fmt.Errorf("user account is not active")
 	}
 
@@ -361,7 +365,10 @@ func (s *Service) RevokeAPIKey(ctx context.Context, keyID, userID string) error 
 		return fmt.Errorf("failed to revoke API key: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("API key not found or already revoked")
 	}

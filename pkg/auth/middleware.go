@@ -10,6 +10,12 @@ import (
 	"github.com/sciffer/agentbox/pkg/users"
 )
 
+// ContextKey is the type for context keys
+type ContextKey string
+
+// UserContextKey is the context key for user
+const UserContextKey ContextKey = "user"
+
 // Middleware provides authentication middleware for HTTP handlers
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +38,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		user, err := s.ValidateJWT(r.Context(), token)
 		if err == nil {
 			// JWT valid, set user in context
-			ctx := context.WithValue(r.Context(), "user", user)
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -46,14 +52,14 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 
 		// API key valid, set user in context
-		ctx := context.WithValue(r.Context(), "user", user)
+		ctx := context.WithValue(r.Context(), UserContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // GetUserFromContext extracts the user from the request context
 func GetUserFromContext(ctx context.Context) (*users.User, bool) {
-	user, ok := ctx.Value("user").(*users.User)
+	user, ok := ctx.Value(UserContextKey).(*users.User)
 	return user, ok
 }
 
@@ -61,5 +67,7 @@ func GetUserFromContext(ctx context.Context) (*users.User, bool) {
 func (s *Service) respondUnauthorized(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte(`{"error":"unauthorized","message":"` + message + `"}`))
+	if _, err := w.Write([]byte(`{"error":"unauthorized","message":"` + message + `"}`)); err != nil {
+		s.logger.Warn("failed to write unauthorized response", zap.Error(err))
+	}
 }

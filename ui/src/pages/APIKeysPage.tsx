@@ -30,6 +30,7 @@ import { apiKeysAPI } from '../services/api'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { APIKey, CreateAPIKeyData } from '../types'
 
 const createKeySchema = z.object({
   description: z.string().optional(),
@@ -50,7 +51,7 @@ export default function APIKeysPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiKeysAPI.create(data.description, data.expiresIn),
+    mutationFn: (formData: CreateAPIKeyData) => apiKeysAPI.create(formData.description, formData.expiresIn),
     onSuccess: (response) => {
       setNewKey(response.key)
       queryClient.invalidateQueries({ queryKey: ['api-keys'] })
@@ -74,10 +75,10 @@ export default function APIKeysPage() {
     resolver: zodResolver(createKeySchema),
   })
 
-  const onSubmit = (data: CreateKeyFormData) => {
+  const onSubmit = (formData: CreateKeyFormData) => {
     createMutation.mutate({
-      description: data.description || undefined,
-      expiresIn: data.expiresIn ? data.expiresIn : undefined,
+      description: formData.description || undefined,
+      expiresIn: formData.expiresIn ? formData.expiresIn : undefined,
     })
   }
 
@@ -91,6 +92,8 @@ export default function APIKeysPage() {
       revokeMutation.mutate(id)
     }
   }
+
+  const apiKeys = data?.api_keys as APIKey[] | undefined
 
   return (
     <Box>
@@ -144,14 +147,14 @@ export default function APIKeysPage() {
                   Loading...
                 </TableCell>
               </TableRow>
-            ) : data?.api_keys?.length === 0 ? (
+            ) : apiKeys?.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} align="center">
                   No API keys found
                 </TableCell>
               </TableRow>
             ) : (
-              data?.api_keys?.map((key: any) => (
+              apiKeys?.map((key) => (
                 <TableRow key={key.id}>
                   <TableCell sx={{ fontFamily: 'monospace' }}>
                     {key.key_prefix}...

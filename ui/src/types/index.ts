@@ -41,3 +41,31 @@ export interface Metric {
   value: number
   timestamp: string
 }
+
+export interface LogEntry {
+  message: string
+  timestamp?: string
+}
+
+export interface CreateEnvironmentData {
+  name: string
+  image: string
+  resources: {
+    cpu: string
+    memory: string
+    storage: string
+  }
+}
+
+export interface CreateUserData {
+  username: string
+  email?: string
+  password: string
+  role: string
+  status: string
+}
+
+export interface CreateAPIKeyData {
+  description?: string
+  expiresIn?: number
+}

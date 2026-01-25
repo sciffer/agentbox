@@ -299,12 +299,13 @@ func (s *Session) Close() {
 		s.stderr.Close()
 	}
 
-	// Send close message (best effort)
+	// Send close message (best effort, ignore error on close)
 	closeMsg := models.WebSocketMessage{
 		Type:      "exit",
 		Timestamp: time.Now(),
 	}
-	_ = s.Conn.WriteJSON(closeMsg) // Ignore error on close
+	//nolint:errcheck // Best effort close message, connection will be closed anyway
+	s.Conn.WriteJSON(closeMsg)
 	s.Conn.Close()
 }
 

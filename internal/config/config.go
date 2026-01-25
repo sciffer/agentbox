@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -105,8 +106,8 @@ func setDefaults(cfg *Config) {
 // overrideFromEnv overrides config with environment variables
 func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTBOX_PORT"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", &cfg.Server.Port); err != nil {
-			// Invalid port value, keep default
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Port = port
 		}
 	}
 	if v := os.Getenv("AGENTBOX_HOST"); v != "" {
@@ -140,23 +141,23 @@ func overrideFromEnv(cfg *Config) {
 		cfg.Resources.DefaultStorageLimit = v
 	}
 	if v := os.Getenv("AGENTBOX_MAX_ENVIRONMENTS_PER_USER"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", &cfg.Resources.MaxEnvironmentsPerUser); err != nil {
-			// Invalid value, keep default
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Resources.MaxEnvironmentsPerUser = val
 		}
 	}
 	if v := os.Getenv("AGENTBOX_DEFAULT_TIMEOUT"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", &cfg.Timeouts.DefaultTimeout); err != nil {
-			// Invalid value, keep default
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Timeouts.DefaultTimeout = val
 		}
 	}
 	if v := os.Getenv("AGENTBOX_MAX_TIMEOUT"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", &cfg.Timeouts.MaxTimeout); err != nil {
-			// Invalid value, keep default
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Timeouts.MaxTimeout = val
 		}
 	}
 	if v := os.Getenv("AGENTBOX_STARTUP_TIMEOUT"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", &cfg.Timeouts.StartupTimeout); err != nil {
-			// Invalid value, keep default
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.Timeouts.StartupTimeout = val
 		}
 	}
 }
