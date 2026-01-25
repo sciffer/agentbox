@@ -50,14 +50,237 @@ http://localhost:8080/api/v1
 ```
 
 ### Authentication
-API uses Bearer token authentication:
+
+The API supports two authentication methods:
+
+**1. JWT Token (via Authorization header):**
+```
+Authorization: Bearer <jwt-token>
+```
+
+Obtain a JWT token by logging in via `POST /api/v1/auth/login`. Tokens expire based on `AGENTBOX_JWT_EXPIRY` (default: 15m).
+
+**2. API Key (via X-API-Key header or Authorization header):**
+```
+X-API-Key: ak_live_your-api-key
+```
+or
+```
+Authorization: Bearer ak_live_your-api-key
+```
+
+Create API keys via `POST /api/v1/api-keys`. API keys can be set to expire or never expire.
+
+**User Roles:**
+- `super_admin` - Full access to all features
+- `admin` - Can manage users and all resources
+- `user` - Standard user access
+
+### Endpoints
+
+#### Authentication Endpoints
+
+##### Login
+
+**POST** `/auth/login`
+
+Authenticates a user and returns a JWT token.
+
+**Request Body:**
+```json
+{
+  "username": "admin",
+  "password": "your-password"
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": {
+    "id": "user-123",
+    "username": "admin",
+    "email": "admin@example.com",
+    "role": "super_admin",
+    "status": "active",
+    "created_at": "2026-01-22T10:00:00Z"
+  },
+  "expires_at": "2026-01-22T11:00:00Z"
+}
+```
+
+##### Logout
+
+**POST** `/auth/logout`
+
+Logs out the current user (client should discard the token).
+
+**Response:** `204 No Content`
+
+##### Get Current User
+
+**GET** `/auth/me`
+
+Returns the currently authenticated user's information.
+
+**Headers:**
 ```
 Authorization: Bearer <token>
 ```
 
-### Endpoints
+**Response:** `200 OK`
+```json
+{
+  "id": "user-123",
+  "username": "admin",
+  "email": "admin@example.com",
+  "role": "super_admin",
+  "status": "active",
+  "created_at": "2026-01-22T10:00:00Z",
+  "last_login": "2026-01-22T10:30:00Z"
+}
+```
 
-#### 1. Create Environment
+##### Change Password
+
+**POST** `/auth/change-password`
+
+Changes the current user's password.
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+```json
+{
+  "current_password": "old-password",
+  "new_password": "new-password-min-8-chars"
+}
+```
+
+**Response:** `200 OK`
+
+#### User Management Endpoints (Admin Only)
+
+##### List Users
+
+**GET** `/users`
+
+Lists all users (admin only).
+
+**Query Parameters:**
+- `limit` - Max results (default: 100)
+- `offset` - Pagination offset (default: 0)
+
+**Response:** `200 OK`
+```json
+{
+  "users": [
+    {
+      "id": "user-123",
+      "username": "admin",
+      "email": "admin@example.com",
+      "role": "super_admin",
+      "status": "active"
+    }
+  ],
+  "total": 1
+}
+```
+
+##### Create User
+
+**POST** `/users`
+
+Creates a new user (admin only).
+
+**Request Body:**
+```json
+{
+  "username": "newuser",
+  "email": "user@example.com",
+  "password": "password123",
+  "role": "user",
+  "status": "active"
+}
+```
+
+**Response:** `201 Created`
+
+##### Get User
+
+**GET** `/users/{id}`
+
+Gets a user by ID. Users can view their own profile; admins can view any user.
+
+**Response:** `200 OK`
+
+#### API Key Management Endpoints
+
+##### List API Keys
+
+**GET** `/api-keys`
+
+Lists API keys for the current user.
+
+**Response:** `200 OK`
+```json
+{
+  "api_keys": [
+    {
+      "id": "key-123",
+      "key_prefix": "ak_live_",
+      "description": "My API key",
+      "created_at": "2026-01-22T10:00:00Z",
+      "expires_at": "2026-02-22T10:00:00Z",
+      "last_used": "2026-01-22T10:30:00Z"
+    }
+  ]
+}
+```
+
+##### Create API Key
+
+**POST** `/api-keys`
+
+Creates a new API key for the current user.
+
+**Request Body:**
+```json
+{
+  "description": "My API key",
+  "expires_in": 30
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "id": "key-123",
+  "key": "ak_live_abc123...",
+  "key_prefix": "ak_live_",
+  "description": "My API key",
+  "created_at": "2026-01-22T10:00:00Z",
+  "expires_at": "2026-02-22T10:00:00Z"
+}
+```
+
+**Note:** The full `key` is only returned once on creation. Store it securely.
+
+##### Revoke API Key
+
+**DELETE** `/api-keys/{id}`
+
+Revokes an API key.
+
+**Response:** `204 No Content`
+
+#### Environment Endpoints
+
+##### 1. Create Environment
 
 **POST** `/environments`
 

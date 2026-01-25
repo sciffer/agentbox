@@ -130,9 +130,19 @@ Once running, test the API:
 # Health check
 curl http://localhost:8080/api/v1/health
 
-# Create environment
+# Login (get JWT token)
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin"}' | jq -r '.token')
+
+# Get current user info
+curl http://localhost:8080/api/v1/auth/me \
+  -H "Authorization: Bearer $TOKEN"
+
+# Create environment (authenticated)
 curl -X POST http://localhost:8080/api/v1/environments \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "test-env",
     "image": "python:3.11-slim",
@@ -142,6 +152,38 @@ curl -X POST http://localhost:8080/api/v1/environments \
       "storage": "1Gi"
     }
   }'
+
+# Create an API key for programmatic access
+curl -X POST http://localhost:8080/api/v1/api-keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"description": "My API key", "expires_in": 30}'
+```
+
+## Authentication Setup
+
+The API server initializes with a default admin user:
+- **Username:** `admin` (or set via `AGENTBOX_ADMIN_USERNAME`)
+- **Password:** `admin` (or set via `AGENTBOX_ADMIN_PASSWORD`)
+
+**Important:** Change the default admin password in production!
+
+### Environment Variables for Authentication
+
+```bash
+# Required for JWT signing (min 32 characters)
+export AGENTBOX_JWT_SECRET="your-secure-secret-key-at-least-32-chars"
+
+# Optional: Token expiry (default: 15m)
+export AGENTBOX_JWT_EXPIRY="1h"
+
+# Optional: Custom admin credentials
+export AGENTBOX_ADMIN_USERNAME="admin"
+export AGENTBOX_ADMIN_PASSWORD="secure-password"
+export AGENTBOX_ADMIN_EMAIL="admin@example.com"
+
+# Optional: API key prefix
+export AGENTBOX_API_KEY_PREFIX="ak_live_"
 ```
 
 ## Next Steps

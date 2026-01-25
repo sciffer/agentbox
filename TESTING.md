@@ -4,16 +4,21 @@
 
 ```
 tests/
-├── unit/               # Unit tests (fast, no external dependencies)
-│   ├── api_test.go
-│   ├── config_test.go
-│   ├── orchestrator_test.go
-│   └── validator_test.go
-├── integration/        # Integration tests (require k8s cluster)
+├── unit/                    # Unit tests (fast, no external dependencies)
+│   ├── api_test.go          # Environment API tests
+│   ├── api_auth_test.go     # Authentication API tests
+│   ├── user_api_test.go     # User management API tests
+│   ├── apikey_api_test.go   # API key management tests
+│   ├── auth_test.go         # Auth service tests
+│   ├── users_test.go        # User service tests
+│   ├── config_test.go       # Configuration tests
+│   ├── orchestrator_test.go # Orchestrator tests
+│   └── validator_test.go    # Validation tests
+├── integration/             # Integration tests (require k8s cluster)
 │   └── lifecycle_test.go
-├── mocks/              # Mock implementations
+├── mocks/                   # Mock implementations
 │   └── k8s_mock.go
-└── fixtures/           # Test data
+└── fixtures/                # Test data
 ```
 
 ## Running Tests
@@ -142,7 +147,7 @@ go test ./tests/unit/... -v -run TestOrchestrator
 
 ### 4. API Tests (`tests/unit/api_test.go`)
 
-Tests HTTP API endpoints:
+Tests HTTP API endpoints for environments:
 - Request/response handling
 - Status codes
 - Error handling
@@ -155,7 +160,58 @@ Example:
 go test ./tests/unit/... -v -run TestAPI
 ```
 
-### 5. Integration Tests (`tests/integration/lifecycle_test.go`)
+### 5. Authentication Tests (`tests/unit/api_auth_test.go`, `tests/unit/auth_test.go`)
+
+Tests authentication functionality:
+- Login/logout flows
+- JWT token generation and validation
+- Password change
+- Authentication middleware
+- X-API-Key header support
+
+**Coverage:** 90%+
+
+Example:
+```bash
+go test ./tests/unit/... -v -run TestLogin
+go test ./tests/unit/... -v -run TestGetMe
+go test ./tests/unit/... -v -run TestChangePassword
+```
+
+### 6. User Management Tests (`tests/unit/user_api_test.go`, `tests/unit/users_test.go`)
+
+Tests user management:
+- User CRUD operations
+- Role-based access control
+- Admin vs regular user permissions
+- Default admin creation
+
+**Coverage:** 85%+
+
+Example:
+```bash
+go test ./tests/unit/... -v -run TestListUsers
+go test ./tests/unit/... -v -run TestCreateUser
+go test ./tests/unit/... -v -run TestGetUser
+```
+
+### 7. API Key Tests (`tests/unit/apikey_api_test.go`)
+
+Tests API key management:
+- Creating API keys
+- Listing API keys
+- Revoking API keys
+- API key authentication
+- Key expiration
+
+**Coverage:** 90%+
+
+Example:
+```bash
+go test ./tests/unit/... -v -run TestAPIKey
+```
+
+### 8. Integration Tests (`tests/integration/lifecycle_test.go`)
 
 Tests full system integration:
 - Complete lifecycle (create → exec → delete)
@@ -384,10 +440,12 @@ Current test coverage by package:
 |---------|----------|-------|
 | pkg/validator | 95%+ | 30+ |
 | pkg/orchestrator | 85%+ | 25+ |
-| pkg/api | 90%+ | 20+ |
+| pkg/api | 90%+ | 40+ |
+| pkg/auth | 90%+ | 15+ |
+| pkg/users | 85%+ | 10+ |
 | internal/config | 90%+ | 10+ |
 | pkg/k8s | 70%+ | 15+ |
-| **Total** | **85%+** | **100+** |
+| **Total** | **85%+** | **145+** |
 
 ## Performance Testing
 

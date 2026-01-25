@@ -15,9 +15,13 @@ import (
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/api"
+	"github.com/sciffer/agentbox/pkg/auth"
+	"github.com/sciffer/agentbox/pkg/database"
 	"github.com/sciffer/agentbox/pkg/k8s"
+	"github.com/sciffer/agentbox/pkg/metrics"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
 	"github.com/sciffer/agentbox/pkg/proxy"
+	"github.com/sciffer/agentbox/pkg/users"
 	"github.com/sciffer/agentbox/pkg/validator"
 )
 
@@ -53,6 +57,26 @@ func run() error {
 
 	log.Info("starting agentbox server", zap.String("version", "1.0.0"))
 
+	// Initialize database
+	db, err := database.NewDB(log.Logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer db.Close()
+	log.Info("database initialized")
+
+	// Initialize user service
+	userService := users.NewService(db, log.Logger)
+
+	// Ensure default admin user exists
+	ctx := context.Background()
+	if err := userService.EnsureDefaultAdmin(ctx); err != nil {
+		log.Warn("failed to ensure default admin", zap.Error(err))
+	}
+
+	// Initialize auth service
+	authService := auth.NewService(db, userService, log.Logger)
+
 	// Initialize Kubernetes client
 	k8sClient, err := k8s.NewClient(cfg.Kubernetes.Kubeconfig)
 	if err != nil {
@@ -60,7 +84,6 @@ func run() error {
 	}
 
 	// Verify Kubernetes connectivity
-	ctx := context.Background()
 	if err := k8sClient.HealthCheck(ctx); err != nil {
 		return fmt.Errorf("kubernetes health check failed: %w", err)
 	}
@@ -83,16 +106,33 @@ func run() error {
 	// Initialize orchestrator
 	orch := orchestrator.New(k8sClient, cfg, log)
 
-	// Initialize API handler
-	handler := api.NewHandler(orch, val, log)
-
 	// Initialize WebSocket proxy
-	// Use ClientInterface for better testability
 	var k8sInterface k8s.ClientInterface = k8sClient
 	proxyHandler := proxy.NewProxy(k8sInterface, log)
 
-	// Create router
-	router := api.NewRouter(handler, proxyHandler)
+	// Initialize metrics collector
+	metricsCollector := metrics.NewCollector(db, orch, log.Logger)
+	go metricsCollector.Start(ctx)
+	defer metricsCollector.Stop()
+
+	// Initialize all handlers
+	handler := api.NewHandler(orch, val, log)
+	authHandler := api.NewAuthHandler(authService, userService, log)
+	userHandler := api.NewUserHandler(userService, authService, log)
+	apiKeyHandler := api.NewAPIKeyHandler(authService, log)
+	metricsHandler := api.NewMetricsHandler(db, log)
+
+	// Create router with full configuration
+	routerConfig := &api.RouterConfig{
+		Handler:        handler,
+		AuthHandler:    authHandler,
+		UserHandler:    userHandler,
+		APIKeyHandler:  apiKeyHandler,
+		MetricsHandler: metricsHandler,
+		ProxyHandler:   proxyHandler,
+		AuthService:    authService,
+	}
+	router := api.NewRouter(routerConfig)
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
