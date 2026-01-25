@@ -46,19 +46,21 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 	namespace := o.generateNamespace(envID)
 
 	env := &models.Environment{
-		ID:        envID,
-		Name:      req.Name,
-		Status:    models.StatusPending,
-		Image:     req.Image,
-		CreatedAt: time.Now(),
-		Resources: req.Resources,
-		Namespace: namespace,
-		Env:       req.Env,
-		Command:   req.Command,
-		Labels:    req.Labels,
-		Timeout:   req.Timeout,
-		UserID:    userID,
-		Endpoint:  fmt.Sprintf("ws://localhost:8080/api/v1/environments/%s/attach", envID),
+		ID:           envID,
+		Name:         req.Name,
+		Status:       models.StatusPending,
+		Image:        req.Image,
+		CreatedAt:    time.Now(),
+		Resources:    req.Resources,
+		Namespace:    namespace,
+		Env:          req.Env,
+		Command:      req.Command,
+		Labels:       req.Labels,
+		Timeout:      req.Timeout,
+		UserID:       userID,
+		NodeSelector: req.NodeSelector,
+		Tolerations:  req.Tolerations,
+		Endpoint:     fmt.Sprintf("ws://localhost:8080/api/v1/environments/%s/attach", envID),
 	}
 
 	// Store environment in memory
@@ -109,6 +111,8 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 	envResources := env.Resources
 	envEnvVars := env.Env
 	envLabels := env.Labels
+	envNodeSelector := env.NodeSelector
+	envTolerations := env.Tolerations
 
 	// Create namespace
 	labels := map[string]string{
@@ -147,6 +151,18 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 		command = []string{"/bin/sh", "-c", "sleep infinity"}
 	}
 
+	// Convert model tolerations to k8s tolerations
+	var k8sTolerations []k8s.Toleration
+	for _, t := range envTolerations {
+		k8sTolerations = append(k8sTolerations, k8s.Toleration{
+			Key:               t.Key,
+			Operator:          t.Operator,
+			Value:             t.Value,
+			Effect:            t.Effect,
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+
 	podSpec := &k8s.PodSpec{
 		Name:         podName,
 		Namespace:    envNamespace,
@@ -158,6 +174,8 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 		Storage:      envResources.Storage,
 		RuntimeClass: o.config.Kubernetes.RuntimeClass,
 		Labels:       labels,
+		NodeSelector: envNodeSelector,
+		Tolerations:  k8sTolerations,
 	}
 
 	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {

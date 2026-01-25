@@ -9,6 +9,14 @@ export interface User {
   last_login?: string
 }
 
+export interface Toleration {
+  key?: string
+  operator?: 'Exists' | 'Equal'
+  value?: string
+  effect?: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute'
+  tolerationSeconds?: number
+}
+
 export interface Environment {
   id: string
   name: string
@@ -22,6 +30,8 @@ export interface Environment {
   created_at: string
   started_at?: string
   terminated_at?: string
+  node_selector?: Record<string, string>
+  tolerations?: Toleration[]
 }
 
 export interface EnvironmentPermission {
@@ -74,6 +84,12 @@ export interface CreateEnvironmentData {
     memory: string
     storage: string
   }
+  labels?: Record<string, string>
+  env?: Record<string, string>
+  command?: string[]
+  timeout?: number
+  node_selector?: Record<string, string>
+  tolerations?: Toleration[]
 }
 
 export interface CreateUserData {

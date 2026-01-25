@@ -37,8 +37,8 @@ func setupMetricsTest(t *testing.T) (*database.DB, *metrics.Collector) {
 		db.Close()
 	})
 
-	// Create a minimal collector for testing (nil orchestrator for basic tests)
-	collector := metrics.NewCollector(db, nil, logger)
+	// Create a minimal collector for testing (nil orchestrator and k8sClient for basic tests)
+	collector := metrics.NewCollector(db, nil, nil, logger)
 
 	return db, collector
 }

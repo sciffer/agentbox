@@ -100,7 +100,7 @@ func setDefaults(cfg *Config) {
 
 	cfg.Timeouts.DefaultTimeout = 3600
 	cfg.Timeouts.MaxTimeout = 86400
-	cfg.Timeouts.StartupTimeout = 60
+	cfg.Timeouts.StartupTimeout = 120 // 2 minutes to allow for image pulls
 }
 
 // overrideFromEnv overrides config with environment variables

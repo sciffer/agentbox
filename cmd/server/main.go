@@ -115,7 +115,7 @@ func run() error {
 	proxyHandler := proxy.NewProxy(k8sInterface, log)
 
 	// Initialize metrics collector
-	metricsCollector := metrics.NewCollector(db, orch, log.Logger)
+	metricsCollector := metrics.NewCollector(db, orch, k8sClient, log.Logger)
 	go metricsCollector.Start(ctx)
 	defer metricsCollector.Stop()
 

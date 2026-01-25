@@ -305,9 +305,45 @@ Creates a new isolated execution environment.
   "labels": {
     "team": "ai-research",
     "project": "agent-framework"
-  }
+  },
+  "node_selector": {
+    "kubernetes.io/arch": "amd64",
+    "node-type": "compute"
+  },
+  "tolerations": [
+    {
+      "key": "dedicated",
+      "operator": "Equal",
+      "value": "agents",
+      "effect": "NoSchedule"
+    }
+  ]
 }
 ```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Name of the environment (lowercase alphanumeric with hyphens, max 63 chars) |
+| `image` | string | Yes | Container image to use |
+| `resources` | object | Yes | Resource limits (cpu, memory, storage) |
+| `timeout` | int | No | Max runtime in seconds (default: 3600) |
+| `env` | object | No | Environment variables to set |
+| `command` | array | No | Command to run (default: sleep infinity) |
+| `labels` | object | No | Labels to apply to resources |
+| `node_selector` | object | No | Kubernetes node selector for pod scheduling |
+| `tolerations` | array | No | Kubernetes tolerations for scheduling on tainted nodes |
+
+**Toleration Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | string | Taint key to match |
+| `operator` | string | "Equal" or "Exists" |
+| `value` | string | Taint value to match (only for "Equal" operator) |
+| `effect` | string | "NoSchedule", "PreferNoSchedule", or "NoExecute" |
+| `tolerationSeconds` | int | Seconds to tolerate (only for "NoExecute") |
 
 **Response:** `201 Created`
 ```json

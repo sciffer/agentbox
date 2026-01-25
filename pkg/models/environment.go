@@ -13,23 +13,34 @@ const (
 	StatusFailed      EnvironmentStatus = "failed"
 )
 
+// Toleration represents a Kubernetes toleration for pod scheduling
+type Toleration struct {
+	Key               string `json:"key,omitempty"`
+	Operator          string `json:"operator,omitempty"` // "Exists" or "Equal"
+	Value             string `json:"value,omitempty"`
+	Effect            string `json:"effect,omitempty"` // "NoSchedule", "PreferNoSchedule", "NoExecute"
+	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty"`
+}
+
 // Environment represents an isolated execution environment
 type Environment struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Status    EnvironmentStatus `json:"status"`
-	Image     string            `json:"image"`
-	CreatedAt time.Time         `json:"created_at"`
-	StartedAt *time.Time        `json:"started_at,omitempty"`
-	Resources ResourceSpec      `json:"resources"`
-	Endpoint  string            `json:"endpoint"`
-	Namespace string            `json:"namespace"`
-	Metrics   *ResourceMetrics  `json:"metrics,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Command   []string          `json:"command,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Timeout   int               `json:"timeout,omitempty"`
-	UserID    string            `json:"user_id,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Status       EnvironmentStatus `json:"status"`
+	Image        string            `json:"image"`
+	CreatedAt    time.Time         `json:"created_at"`
+	StartedAt    *time.Time        `json:"started_at,omitempty"`
+	Resources    ResourceSpec      `json:"resources"`
+	Endpoint     string            `json:"endpoint"`
+	Namespace    string            `json:"namespace"`
+	Metrics      *ResourceMetrics  `json:"metrics,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	Command      []string          `json:"command,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Timeout      int               `json:"timeout,omitempty"`
+	UserID       string            `json:"user_id,omitempty"`
+	NodeSelector map[string]string `json:"node_selector,omitempty"`
+	Tolerations  []Toleration      `json:"tolerations,omitempty"`
 }
 
 // ResourceSpec defines resource limits and requests
@@ -47,13 +58,15 @@ type ResourceMetrics struct {
 
 // CreateEnvironmentRequest is the request body for creating an environment
 type CreateEnvironmentRequest struct {
-	Name      string            `json:"name" validate:"required"`
-	Image     string            `json:"image" validate:"required"`
-	Resources ResourceSpec      `json:"resources" validate:"required"`
-	Timeout   int               `json:"timeout,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Command   []string          `json:"command,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
+	Name         string            `json:"name" validate:"required"`
+	Image        string            `json:"image" validate:"required"`
+	Resources    ResourceSpec      `json:"resources" validate:"required"`
+	Timeout      int               `json:"timeout,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	Command      []string          `json:"command,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	NodeSelector map[string]string `json:"node_selector,omitempty"`
+	Tolerations  []Toleration      `json:"tolerations,omitempty"`
 }
 
 // ExecRequest is the request body for executing a command

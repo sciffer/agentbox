@@ -27,14 +27,55 @@ func (c *Client) CreateNamespace(ctx context.Context, name string, labels map[st
 	return nil
 }
 
-// DeleteNamespace deletes a namespace
+// DeleteNamespace deletes a namespace and waits for it to be fully removed
 func (c *Client) DeleteNamespace(ctx context.Context, name string) error {
-	err := c.clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+	// Use Foreground propagation policy to ensure all resources are deleted
+	propagationPolicy := metav1.DeletePropagationForeground
+	err := c.clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{
+		PropagationPolicy: &propagationPolicy,
+	})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil // Already deleted
+		}
 		return fmt.Errorf("failed to delete namespace: %w", err)
 	}
 
-	return nil
+	// Wait for namespace to be fully deleted
+	return c.waitForNamespaceDeletion(ctx, name)
+}
+
+// waitForNamespaceDeletion waits for a namespace to be fully deleted
+func (c *Client) waitForNamespaceDeletion(ctx context.Context, name string) error {
+	// Use a watch to wait for the namespace to be deleted
+	watch, err := c.clientset.CoreV1().Namespaces().Watch(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", name),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to watch namespace deletion: %w", err)
+	}
+	defer watch.Stop()
+
+	for {
+		select {
+		case event := <-watch.ResultChan():
+			if event.Type == "DELETED" {
+				return nil
+			}
+			// Check if namespace still exists
+			_, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+			if errors.IsNotFound(err) {
+				return nil
+			}
+		case <-ctx.Done():
+			// Check one more time if namespace is gone
+			_, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+			if errors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("timeout waiting for namespace deletion: %w", ctx.Err())
+		}
+	}
 }
 
 // NamespaceExists checks if a namespace exists
