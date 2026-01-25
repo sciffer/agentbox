@@ -116,7 +116,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Status == "" {
-		req.Status = "active" // Default status
+		req.Status = users.StatusActive // Default status
 	}
 
 	// Create user

@@ -144,7 +144,7 @@ func TestGetMeAPI(t *testing.T) {
 	// Create a handler that includes auth middleware
 	// For testing, we'll call GetMe directly with a context that has the user
 	// In real usage, middleware would set this
-	req = req.WithContext(context.WithValue(req.Context(), "user", user))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserContextKey, user))
 	authHandler.GetMe(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)

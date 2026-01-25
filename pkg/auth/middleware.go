@@ -67,5 +67,7 @@ func GetUserFromContext(ctx context.Context) (*users.User, bool) {
 func (s *Service) respondUnauthorized(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"error":"unauthorized","message":"` + message + `"}`))
+	if _, err := w.Write([]byte(`{"error":"unauthorized","message":"` + message + `"}`)); err != nil {
+		s.logger.Warn("failed to write unauthorized response", zap.Error(err))
+	}
 }

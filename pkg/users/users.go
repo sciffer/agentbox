@@ -13,6 +13,19 @@ import (
 	"github.com/sciffer/agentbox/pkg/database"
 )
 
+// User status constants
+const (
+	StatusActive   = "active"
+	StatusInactive = "inactive"
+)
+
+// User role constants
+const (
+	RoleUser       = "user"
+	RoleAdmin      = "admin"
+	RoleSuperAdmin = "super_admin"
+)
+
 // Service handles user operations
 type Service struct {
 	db     *database.DB
@@ -75,8 +88,8 @@ func (s *Service) EnsureDefaultAdmin(ctx context.Context) error {
 			Username: adminUsername,
 			Email:    adminEmail,
 			Password: adminPassword,
-			Role:     "super_admin",
-			Status:   "active",
+			Role:     RoleSuperAdmin,
+			Status:   StatusActive,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create default admin: %w", err)
