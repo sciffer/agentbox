@@ -88,14 +88,19 @@ export default function DashboardPage() {
     refetchInterval: 30000,
   })
 
-  const envList = environments?.environments as Environment[] | undefined
-  const runningEnvs = envList?.filter((e) => e.status === 'running') || []
+  // Handle both direct array response and wrapped response {environments: [...], total: X}
+  const envData = environments as { environments?: Environment[]; total?: number } | Environment[] | undefined
+  const envList: Environment[] = Array.isArray(envData) 
+    ? envData 
+    : (envData?.environments || [])
+  
+  const runningEnvs = envList.filter((e) => e.status === 'running')
 
   const stats = {
-    total: environments?.total || 0,
+    total: Array.isArray(envData) ? envData.length : (envData?.total || envList.length),
     running: runningEnvs.length,
-    pending: envList?.filter((e) => e.status === 'pending').length || 0,
-    failed: envList?.filter((e) => e.status === 'failed').length || 0,
+    pending: envList.filter((e) => e.status === 'pending').length,
+    failed: envList.filter((e) => e.status === 'failed').length,
   }
 
   // Format metrics for charts
