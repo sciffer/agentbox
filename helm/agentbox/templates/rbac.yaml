@@ -1,34 +1,83 @@
 {{- if .Values.rbac.create }}
+# ClusterRole for cluster-scoped resources (nodes, cluster capacity)
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: {{ include "agentbox.fullname" . }}-sandbox-manager
+  name: {{ include "agentbox.fullname" . }}-cluster-reader
   labels:
     {{- include "agentbox.labels" . | nindent 4 }}
 rules:
+  # Read nodes for cluster capacity information
   - apiGroups: [""]
-    resources: ["pods", "pods/exec", "pods/log"]
-    verbs: ["create", "delete", "get", "list", "watch"]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Read namespaces cluster-wide (for sandbox management)
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["create", "delete", "get", "list", "watch"]
+  # Read pods cluster-wide (for sandbox management across namespaces)
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log", "pods/attach"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  # Manage resource quotas and limit ranges in any namespace
   - apiGroups: [""]
     resources: ["resourcequotas", "limitranges"]
     verbs: ["create", "delete", "get", "list", "watch"]
+  # Manage network policies in any namespace
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["create", "delete", "get", "list", "watch"]
+  # Read persistent volume claims (for sandbox storage)
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  # Read events for debugging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agentbox.fullname" . }}-cluster-reader
+  labels:
+    {{- include "agentbox.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agentbox.fullname" . }}-cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentbox.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role for namespace-specific permissions (in the release namespace)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentbox.fullname" . }}-namespace-manager
+  labels:
+    {{- include "agentbox.labels" . | nindent 4 }}
+rules:
+  # Manage secrets in the release namespace (for API keys, etc.)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # Manage configmaps in the release namespace
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "agentbox.fullname" . }}-sandbox-manager
+  name: {{ include "agentbox.fullname" . }}-namespace-manager
   labels:
     {{- include "agentbox.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "agentbox.fullname" . }}-sandbox-manager
+  name: {{ include "agentbox.fullname" . }}-namespace-manager
 subjects:
   - kind: ServiceAccount
     name: {{ include "agentbox.serviceAccountName" . }}

@@ -5,10 +5,19 @@
 api:
   image:
     repository: ghcr.io/sciffer/agentbox
-    tag: "main-0b2fb2b"
+    tag: "main-a7e575a"
     pullPolicy: IfNotPresent
 ui:
   image:
     repository: ghcr.io/sciffer/agentbox-ui
-    tag: "main-0b2fb2b"
+    tag: "main-a7e575a"
     pullPolicy: IfNotPresent
+secrets:
+  create: true
+  jwtSecret: "your-jwt-secret-minimum-32-characters-long"
+  adminUsername: "admin"
+  adminPassword: "admin123"
+  adminEmail: ""
+  googleClientId: ""
+  googleClientSecret: ""
+  databaseDSN: ""

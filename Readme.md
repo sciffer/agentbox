@@ -292,31 +292,67 @@ System health status.
 
 ### Environment Variables
 
+**Server Configuration:**
 ```bash
-# Server Configuration
-AGENTBOX_PORT=8080
-AGENTBOX_HOST=0.0.0.0
-AGENTBOX_LOG_LEVEL=info
+AGENTBOX_HOST=0.0.0.0              # Server bind address
+AGENTBOX_PORT=8080                  # Server port
+AGENTBOX_LOG_LEVEL=info             # Log level: debug, info, warn, error
+```
 
-# Kubernetes Configuration
-AGENTBOX_KUBECONFIG=/path/to/kubeconfig
-AGENTBOX_NAMESPACE_PREFIX=agentbox-
-AGENTBOX_RUNTIME_CLASS=gvisor
+**Database Configuration:**
+```bash
+AGENTBOX_DB_PATH=/data/agentbox.db  # SQLite database path
+AGENTBOX_DB_DSN=                    # PostgreSQL connection string (overrides DB_PATH)
+```
 
-# Security
-AGENTBOX_AUTH_ENABLED=true
-AGENTBOX_AUTH_SECRET=your-secret-key
+**Authentication (Required):**
+```bash
+AGENTBOX_JWT_SECRET=your-secret     # JWT signing secret (min 32 chars)
+AGENTBOX_AUTH_SECRET=your-secret    # Config validation secret (same as JWT_SECRET)
+AGENTBOX_AUTH_ENABLED=true          # Enable/disable authentication
+AGENTBOX_JWT_EXPIRY=24h             # JWT token expiry duration
+AGENTBOX_API_KEY_PREFIX=ak_         # Prefix for generated API keys
+```
 
-# Resource Limits (defaults)
-AGENTBOX_DEFAULT_CPU_LIMIT=1000m
-AGENTBOX_DEFAULT_MEMORY_LIMIT=1Gi
-AGENTBOX_DEFAULT_STORAGE_LIMIT=5Gi
-AGENTBOX_MAX_ENVIRONMENTS_PER_USER=100
+**Admin Credentials:**
+```bash
+AGENTBOX_ADMIN_USERNAME=admin       # Initial admin username
+AGENTBOX_ADMIN_PASSWORD=            # Initial admin password (auto-generated if empty)
+AGENTBOX_ADMIN_EMAIL=               # Initial admin email
+```
 
-# Timeouts
-AGENTBOX_DEFAULT_TIMEOUT=3600
-AGENTBOX_MAX_TIMEOUT=86400
-AGENTBOX_STARTUP_TIMEOUT=60
+**Kubernetes Configuration:**
+```bash
+AGENTBOX_KUBECONFIG=                # Path to kubeconfig (empty = in-cluster)
+AGENTBOX_NAMESPACE_PREFIX=agentbox- # Prefix for sandbox namespaces
+AGENTBOX_RUNTIME_CLASS=gvisor       # RuntimeClass for sandboxes (optional)
+```
+
+**Resource Limits (defaults for sandboxes):**
+```bash
+AGENTBOX_DEFAULT_CPU_LIMIT=1000m    # Default CPU limit
+AGENTBOX_DEFAULT_MEMORY_LIMIT=512Mi # Default memory limit
+AGENTBOX_DEFAULT_STORAGE_LIMIT=1Gi  # Default storage limit
+AGENTBOX_MAX_ENVIRONMENTS_PER_USER=10 # Max sandboxes per user
+```
+
+**Timeouts (in seconds):**
+```bash
+AGENTBOX_DEFAULT_TIMEOUT=3600       # Default sandbox timeout (1 hour)
+AGENTBOX_MAX_TIMEOUT=86400          # Maximum sandbox timeout (24 hours)
+AGENTBOX_STARTUP_TIMEOUT=300        # Sandbox startup timeout (5 minutes)
+```
+
+**Metrics:**
+```bash
+AGENTBOX_METRICS_ENABLED=true       # Enable metrics collection
+AGENTBOX_METRICS_COLLECTION_INTERVAL=30s # Collection interval
+```
+
+**Google OAuth (Optional):**
+```bash
+AGENTBOX_GOOGLE_CLIENT_ID=          # Google OAuth client ID
+AGENTBOX_GOOGLE_CLIENT_SECRET=      # Google OAuth client secret
 ```
 
 ### Kubernetes Requirements
@@ -437,7 +473,8 @@ docker run -p 3000:3000 agentbox-ui:latest
 | Service | Port | Description |
 |---------|------|-------------|
 | Backend API | 8080 | REST API + WebSocket |
-| UI | 3000 | Web interface |
+| UI (development) | 5173 | Vite dev server |
+| UI (production) | 8080 | Nginx (Docker container) |
 
 ## Development
 
@@ -493,12 +530,13 @@ docker build -t agentbox:latest .
 docker run -p 8080:8080 \
   -v ~/.kube/config:/kubeconfig \
   -e AGENTBOX_KUBECONFIG=/kubeconfig \
+  -e AGENTBOX_JWT_SECRET="your-secret-key-min-32-chars" \
   agentbox:latest
 
 # Build and run UI
 docker build -t agentbox-ui:latest ./ui
-docker run -p 3000:3000 \
-  -e VITE_API_URL=http://localhost:8080/api/v1 \
+docker run -p 3000:8080 \
+  -e VITE_API_URL=http://localhost:8080 \
   agentbox-ui:latest
 ```
 
