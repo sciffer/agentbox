@@ -25,7 +25,6 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
   Visibility as ViewIcon,
-  Terminal as TerminalIcon,
 } from '@mui/icons-material'
 import { environmentsAPI } from '../services/api'
 import { useForm } from 'react-hook-form'
