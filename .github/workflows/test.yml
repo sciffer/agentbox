@@ -196,7 +196,7 @@ jobs:
           echo "✅ Required files present"
 
       - name: Build Docker image (test)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
@@ -242,7 +242,7 @@ jobs:
           echo "✅ UI required files present"
 
       - name: Build UI Docker image (test)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./ui
           file: ./ui/Dockerfile

@@ -11,19 +11,23 @@ import (
 	"github.com/sciffer/agentbox/internal/logger"
 	"github.com/sciffer/agentbox/pkg/auth"
 	"github.com/sciffer/agentbox/pkg/models"
+	"github.com/sciffer/agentbox/pkg/permissions"
+	"github.com/sciffer/agentbox/pkg/users"
 )
 
 // APIKeyHandler handles API key management endpoints
 type APIKeyHandler struct {
-	authService *auth.Service
-	logger      *logger.Logger
+	authService       *auth.Service
+	permissionService *permissions.Service
+	logger            *logger.Logger
 }
 
 // NewAPIKeyHandler creates a new API key handler
-func NewAPIKeyHandler(authService *auth.Service, log *logger.Logger) *APIKeyHandler {
+func NewAPIKeyHandler(authService *auth.Service, permissionService *permissions.Service, log *logger.Logger) *APIKeyHandler {
 	return &APIKeyHandler{
-		authService: authService,
-		logger:      log,
+		authService:       authService,
+		permissionService: permissionService,
+		logger:            log,
 	}
 }
 
@@ -48,6 +52,16 @@ func (h *APIKeyHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CreateAPIKeyRequest is the request body for creating an API key
+type CreateAPIKeyRequestBody struct {
+	Description string `json:"description"`
+	ExpiresIn   *int   `json:"expires_in"` // Days until expiration
+	Permissions []struct {
+		EnvironmentID string `json:"environment_id"`
+		Permission    string `json:"permission"`
+	} `json:"permissions,omitempty"`
+}
+
 // CreateAPIKey handles POST /api/v1/api-keys
 func (h *APIKeyHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -59,18 +73,56 @@ func (h *APIKeyHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Limit request body size
-	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 
-	var req struct {
-		Description string `json:"description"`
-		ExpiresIn   *int   `json:"expires_in"` // Days until expiration
-	}
-
+	var req CreateAPIKeyRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
 	defer r.Body.Close()
+
+	// Validate permissions if provided
+	var permReqs []auth.APIKeyPermissionRequest
+	if len(req.Permissions) > 0 {
+		// Super admins can grant any permission
+		isSuperAdmin := user.Role == users.RoleSuperAdmin
+
+		for _, p := range req.Permissions {
+			// Validate permission level
+			if !permissions.ValidatePermission(p.Permission) {
+				h.respondError(w, http.StatusBadRequest, "invalid permission level: "+p.Permission, nil)
+				return
+			}
+
+			// For non-super-admins, verify they have at least the permission they're trying to grant
+			if !isSuperAdmin {
+				userPerm, err := h.permissionService.GetUserPermission(ctx, user.ID, p.EnvironmentID)
+				if err != nil {
+					h.respondError(w, http.StatusInternalServerError, "failed to check user permissions", err)
+					return
+				}
+				if userPerm == nil {
+					h.respondError(w, http.StatusForbidden,
+						"you don't have access to environment: "+p.EnvironmentID, nil)
+					return
+				}
+				// User can only grant permissions up to their own level
+				userLevel := permissions.PermissionLevel(userPerm.Permission)
+				requestedLevel := permissions.PermissionLevel(p.Permission)
+				if requestedLevel > userLevel {
+					h.respondError(w, http.StatusForbidden,
+						"cannot grant permission higher than your own for environment: "+p.EnvironmentID, nil)
+					return
+				}
+			}
+
+			permReqs = append(permReqs, auth.APIKeyPermissionRequest{
+				EnvironmentID: p.EnvironmentID,
+				Permission:    p.Permission,
+			})
+		}
+	}
 
 	var expiresAt *time.Time
 	if req.ExpiresIn != nil && *req.ExpiresIn > 0 {
@@ -82,6 +134,7 @@ func (h *APIKeyHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		UserID:      user.ID,
 		Description: req.Description,
 		ExpiresAt:   expiresAt,
+		Permissions: permReqs,
 	}
 
 	apiKey, err := h.authService.CreateAPIKey(ctx, createReq)
@@ -90,9 +143,37 @@ func (h *APIKeyHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Store API key permissions
+	if len(permReqs) > 0 {
+		permsToStore := make([]struct {
+			EnvironmentID string
+			Permission    string
+		}, len(permReqs))
+		for i, p := range permReqs {
+			permsToStore[i] = struct {
+				EnvironmentID string
+				Permission    string
+			}{
+				EnvironmentID: p.EnvironmentID,
+				Permission:    p.Permission,
+			}
+		}
+		if err := h.permissionService.SetAPIKeyPermissions(ctx, apiKey.ID, permsToStore); err != nil {
+			// Log but don't fail - the key was created
+			h.logger.Error("failed to store API key permissions", zap.Error(err))
+		}
+
+		// Add permissions to response
+		apiKey.Permissions = make([]auth.APIKeyPermissionResponse, len(permReqs))
+		for i, p := range permReqs {
+			apiKey.Permissions[i] = auth.APIKeyPermissionResponse(p)
+		}
+	}
+
 	h.logger.Info("API key created",
 		zap.String("user_id", user.ID),
 		zap.String("key_id", apiKey.ID),
+		zap.Int("permissions_count", len(permReqs)),
 	)
 
 	h.respondJSON(w, http.StatusCreated, apiKey)

@@ -9,13 +9,14 @@ import (
 
 // RouterConfig holds all handlers needed for routing
 type RouterConfig struct {
-	Handler        *Handler
-	AuthHandler    *AuthHandler
-	UserHandler    *UserHandler
-	APIKeyHandler  *APIKeyHandler
-	MetricsHandler *MetricsHandler
-	ProxyHandler   *proxy.Proxy
-	AuthService    *auth.Service
+	Handler           *Handler
+	AuthHandler       *AuthHandler
+	UserHandler       *UserHandler
+	APIKeyHandler     *APIKeyHandler
+	MetricsHandler    *MetricsHandler
+	PermissionHandler *PermissionHandler
+	ProxyHandler      *proxy.Proxy
+	AuthService       *auth.Service
 }
 
 // NewRouter creates and configures the HTTP router
@@ -84,11 +85,26 @@ func NewRouter(configOrHandler interface{}, proxyHandlerOrNil ...*proxy.Proxy) *
 	protected.HandleFunc("/users", config.UserHandler.ListUsers).Methods("GET")
 	protected.HandleFunc("/users", config.UserHandler.CreateUser).Methods("POST")
 	protected.HandleFunc("/users/{id}", config.UserHandler.GetUser).Methods("GET")
+	protected.HandleFunc("/users/{id}", config.UserHandler.UpdateUser).Methods("PUT")
+	protected.HandleFunc("/users/{id}", config.UserHandler.DeleteUser).Methods("DELETE")
+
+	// User permission routes (protected)
+	if config.PermissionHandler != nil {
+		protected.HandleFunc("/users/{id}/permissions", config.PermissionHandler.ListUserPermissions).Methods("GET")
+		protected.HandleFunc("/users/{id}/permissions", config.PermissionHandler.GrantPermission).Methods("POST")
+		protected.HandleFunc("/users/{id}/permissions/{envId}", config.PermissionHandler.UpdatePermission).Methods("PUT")
+		protected.HandleFunc("/users/{id}/permissions/{envId}", config.PermissionHandler.RevokePermission).Methods("DELETE")
+	}
 
 	// API key management routes (protected)
 	protected.HandleFunc("/api-keys", config.APIKeyHandler.ListAPIKeys).Methods("GET")
 	protected.HandleFunc("/api-keys", config.APIKeyHandler.CreateAPIKey).Methods("POST")
 	protected.HandleFunc("/api-keys/{id}", config.APIKeyHandler.RevokeAPIKey).Methods("DELETE")
+
+	// API key permission routes (protected)
+	if config.PermissionHandler != nil {
+		protected.HandleFunc("/api-keys/{id}/permissions", config.PermissionHandler.ListAPIKeyPermissions).Methods("GET")
+	}
 
 	// Metrics routes (protected)
 	if config.MetricsHandler != nil {
