@@ -2,9 +2,7 @@ package users
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -347,11 +345,3 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword string
 	return nil
 }
 
-// generateRandomString generates a random string of specified length
-func generateRandomString(length int) (string, error) {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
-}

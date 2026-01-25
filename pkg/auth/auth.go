@@ -361,7 +361,10 @@ func (s *Service) RevokeAPIKey(ctx context.Context, keyID, userID string) error 
 		return fmt.Errorf("failed to revoke API key: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("API key not found or already revoked")
 	}
