@@ -27,7 +27,14 @@ type Orchestrator struct {
 	environments    map[string]*models.Environment
 	envMutex        sync.RWMutex
 	namespacePrefix string
+	// provisionSem limits concurrent environment provisioning to prevent
+	// overwhelming the Kubernetes API with too many parallel requests
+	provisionSem chan struct{}
 }
+
+// MaxConcurrentProvisions is the maximum number of environments that can be
+// provisioned in parallel. This prevents overwhelming the Kubernetes API.
+const MaxConcurrentProvisions = 10
 
 // New creates a new orchestrator instance
 func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) *Orchestrator {
@@ -37,6 +44,7 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) 
 		logger:          log,
 		environments:    make(map[string]*models.Environment),
 		namespacePrefix: cfg.Kubernetes.NamespacePrefix,
+		provisionSem:    make(chan struct{}, MaxConcurrentProvisions),
 	}
 }
 
@@ -75,6 +83,20 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 	provisionCtx, cancel := context.WithTimeout(context.Background(), time.Duration(o.config.Timeouts.StartupTimeout)*time.Second)
 	go func() {
 		defer cancel()
+
+		// Acquire semaphore to limit concurrent provisioning
+		select {
+		case o.provisionSem <- struct{}{}:
+			// Acquired semaphore, release it when done
+			defer func() { <-o.provisionSem }()
+		case <-provisionCtx.Done():
+			o.logger.Error("timeout waiting to start provisioning",
+				zap.String("environment_id", provisionEnvID),
+			)
+			o.updateEnvironmentStatus(provisionEnvID, models.StatusFailed)
+			return
+		}
+
 		// Re-acquire the environment from map to ensure we have the latest reference
 		o.envMutex.RLock()
 		provisionEnv, exists := o.environments[provisionEnvID]

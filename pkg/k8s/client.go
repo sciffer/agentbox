@@ -36,6 +36,12 @@ func NewClient(kubeconfig string) (*Client, error) {
 		}
 	}
 
+	// Increase rate limits for parallel environment provisioning
+	// Default is QPS=5, Burst=10 which is too low for parallel requests
+	// Each environment creation needs ~5 API calls (namespace, quota, network policy, pod, watch)
+	config.QPS = 50
+	config.Burst = 100
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
