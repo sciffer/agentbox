@@ -210,7 +210,7 @@ func (m *MockK8sClient) WaitForPodCompletion(ctx context.Context, namespace, nam
 	if pods, ok := m.pods[namespace]; ok {
 		if pod, ok := pods[name]; ok {
 			pod.Status.Phase = corev1.PodSucceeded
-			
+
 			// Get logs if available
 			logs := "mock execution output\n"
 			if podLogs, ok := m.podLogs[namespace]; ok {
@@ -218,7 +218,7 @@ func (m *MockK8sClient) WaitForPodCompletion(ctx context.Context, namespace, nam
 					logs = logContent
 				}
 			}
-			
+
 			return &k8s.PodCompletionResult{
 				Phase:    corev1.PodSucceeded,
 				ExitCode: 0,
