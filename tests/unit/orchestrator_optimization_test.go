@@ -34,7 +34,7 @@ func setupOrchestratorForOptimization(t *testing.T) (*orchestrator.Orchestrator,
 	require.NoError(t, err)
 
 	mockK8s := mocks.NewMockK8sClient()
-	orch := orchestrator.New(mockK8s, cfg, log)
+	orch := orchestrator.New(mockK8s, cfg, log, nil)
 
 	return orch, mockK8s
 }

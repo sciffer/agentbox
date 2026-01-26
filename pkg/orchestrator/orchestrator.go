@@ -16,6 +16,7 @@ import (
 
 	"github.com/sciffer/agentbox/internal/config"
 	"github.com/sciffer/agentbox/internal/logger"
+	"github.com/sciffer/agentbox/pkg/database"
 	"github.com/sciffer/agentbox/pkg/k8s"
 	"github.com/sciffer/agentbox/pkg/models"
 )
@@ -33,6 +34,7 @@ type Orchestrator struct {
 	k8sClient       k8s.ClientInterface
 	config          *config.Config
 	logger          *logger.Logger
+	db              *database.DB
 	environments    map[string]*models.Environment
 	envMutex        sync.RWMutex
 	namespacePrefix string
@@ -66,11 +68,12 @@ const MaxConcurrentProvisions = 10
 const MaxConcurrentExecutions = 20
 
 // New creates a new orchestrator instance
-func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) *Orchestrator {
+func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, db *database.DB) *Orchestrator {
 	o := &Orchestrator{
 		k8sClient:          k8sClient,
 		config:             cfg,
 		logger:             log,
+		db:                 db,
 		environments:       make(map[string]*models.Environment),
 		namespacePrefix:    cfg.Kubernetes.NamespacePrefix,
 		provisionSem:       make(chan struct{}, MaxConcurrentProvisions),
@@ -80,6 +83,14 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) 
 		ephemeralNsReady:   false,
 		standbyPool:        make(map[string][]*StandbyPod),
 		poolStopChan:       make(chan struct{}),
+	}
+
+	// Load environments and executions from database on startup
+	if db != nil {
+		ctx := context.Background()
+		if err := o.loadFromDatabase(ctx); err != nil {
+			log.Error("failed to load from database on startup", zap.Error(err))
+		}
 	}
 
 	// Start pool replenishment if enabled
@@ -93,6 +104,43 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) 
 // Stop gracefully shuts down the orchestrator
 func (o *Orchestrator) Stop() {
 	close(o.poolStopChan)
+}
+
+// loadFromDatabase loads all environments and executions from the database
+func (o *Orchestrator) loadFromDatabase(ctx context.Context) error {
+	if o.db == nil {
+		return nil
+	}
+
+	// Load environments
+	envs, err := o.db.LoadAllEnvironments(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load environments: %w", err)
+	}
+
+	o.envMutex.Lock()
+	for _, env := range envs {
+		o.environments[env.ID] = env
+	}
+	o.envMutex.Unlock()
+
+	o.logger.Info("loaded environments from database", zap.Int("count", len(envs)))
+
+	// Load executions
+	execs, err := o.db.LoadAllExecutions(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load executions: %w", err)
+	}
+
+	o.execMutex.Lock()
+	for _, exec := range execs {
+		o.executions[exec.ID] = exec
+	}
+	o.execMutex.Unlock()
+
+	o.logger.Info("loaded executions from database", zap.Int("count", len(execs)))
+
+	return nil
 }
 
 // CreateEnvironment creates a new isolated environment
@@ -120,10 +168,18 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 		Endpoint:     fmt.Sprintf("ws://localhost:8080/api/v1/environments/%s/attach", envID),
 	}
 
-	// Store environment in memory
+	// Store environment in memory and database
 	o.envMutex.Lock()
 	o.environments[envID] = env
 	o.envMutex.Unlock()
+
+	// Save to database
+	if o.db != nil {
+		if err := o.db.SaveEnvironment(ctx, env); err != nil {
+			o.logger.Error("failed to save environment to database", zap.Error(err), zap.String("environment_id", envID))
+			// Continue even if database save fails
+		}
+	}
 
 	// Create Kubernetes resources asynchronously with timeout
 	// Capture envID in local variable to avoid race condition
@@ -312,6 +368,28 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 
 // GetEnvironment retrieves an environment by ID
 func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*models.Environment, error) {
+	// Try database first (for persistence across restarts)
+	if o.db != nil {
+		if env, err := o.db.GetEnvironment(ctx, envID); err == nil {
+			// Also update in-memory cache
+			o.envMutex.Lock()
+			o.environments[envID] = env
+			o.envMutex.Unlock()
+
+			// Refresh status from Kubernetes if running
+			envCopy := *env
+			if envCopy.Status == models.StatusRunning {
+				pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
+				if err == nil {
+					envCopy.Status = convertPodPhaseToStatus(string(pod.Status.Phase))
+				}
+			}
+
+			return &envCopy, nil
+		}
+	}
+
+	// Fallback to in-memory
 	o.envMutex.RLock()
 	env, exists := o.environments[envID]
 	o.envMutex.RUnlock()
@@ -426,10 +504,18 @@ func (o *Orchestrator) DeleteEnvironment(ctx context.Context, envID string, forc
 		return fmt.Errorf("failed to delete namespace: %w", err)
 	}
 
-	// Remove from memory
+	// Remove from memory and database
 	o.envMutex.Lock()
 	delete(o.environments, envID)
 	o.envMutex.Unlock()
+
+	// Delete from database
+	if o.db != nil {
+		if err := o.db.DeleteEnvironment(ctx, envID); err != nil {
+			o.logger.Error("failed to delete environment from database", zap.Error(err), zap.String("environment_id", envID))
+			// Continue even if database delete fails
+		}
+	}
 
 	o.logger.Info("environment deleted",
 		zap.String("environment_id", envID),
@@ -596,11 +682,32 @@ func (o *Orchestrator) generateNamespace(envID string) string {
 
 func (o *Orchestrator) updateEnvironmentStatus(envID string, status models.EnvironmentStatus) {
 	o.envMutex.Lock()
-	defer o.envMutex.Unlock()
-
-	if env, exists := o.environments[envID]; exists {
+	var env *models.Environment
+	var exists bool
+	if env, exists = o.environments[envID]; exists {
 		// Atomically update status to avoid race conditions
 		env.Status = status
+	}
+	o.envMutex.Unlock()
+
+	// Save to database
+	if exists && o.db != nil {
+		ctx := context.Background()
+		var startedAt *time.Time
+		if status == models.StatusRunning && env.StartedAt == nil {
+			now := time.Now()
+			startedAt = &now
+			env.StartedAt = startedAt
+		} else if env.StartedAt != nil {
+			startedAt = env.StartedAt
+		}
+		if err := o.db.UpdateEnvironmentStatus(ctx, envID, status, startedAt); err != nil {
+			o.logger.Error("failed to update environment status in database", zap.Error(err), zap.String("environment_id", envID))
+		}
+		// Also save full environment to ensure all fields are synced
+		if err := o.db.SaveEnvironment(ctx, env); err != nil {
+			o.logger.Error("failed to save environment to database", zap.Error(err), zap.String("environment_id", envID))
+		}
 	}
 }
 
@@ -762,10 +869,18 @@ func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRe
 		CreatedAt:     now,
 	}
 
-	// Store execution
+	// Store execution in memory and database
 	o.execMutex.Lock()
 	o.executions[execID] = exec
 	o.execMutex.Unlock()
+
+	// Save to database
+	if o.db != nil {
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to save execution to database", zap.Error(err), zap.String("execution_id", execID))
+			// Continue even if database save fails
+		}
+	}
 
 	o.logger.Info("execution submitted",
 		zap.String("exec_id", execID),
@@ -827,8 +942,9 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 
 	// Get execution record
 	o.execMutex.RLock()
-	exec := o.executions[execID]
-	namespace := exec.Namespace
+	execRecord := o.executions[execID]
+	namespace := execRecord.Namespace
+	podName := execRecord.PodName
 	o.execMutex.RUnlock()
 
 	// If we got a standby pod, use it with exec
@@ -838,7 +954,6 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 	}
 
 	// No standby pod available, create a new one
-	podName := exec.PodName
 
 	o.logger.Info("starting execution (new pod)",
 		zap.String("exec_id", execID),
@@ -853,7 +968,7 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		"exec-id":        execID,
 		"managed-by":     "agentbox",
 		"type":           "ephemeral",
-		"user-id":        exec.UserID,
+		"user-id":        execRecord.UserID,
 		"environment-id": req.EnvironmentID,
 	}
 	for k, v := range env.Labels {
@@ -954,14 +1069,23 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 	completedAt := time.Now()
 	durationMs := duration.Milliseconds()
 	o.execMutex.Lock()
-	if e, exists := o.executions[execID]; exists {
-		e.Status = models.ExecutionStatusCompleted
-		e.CompletedAt = &completedAt
-		e.ExitCode = &result.ExitCode
-		e.Stdout = result.Logs
-		e.DurationMs = &durationMs
+	var exec *models.Execution
+	var exists bool
+	if exec, exists = o.executions[execID]; exists {
+		exec.Status = models.ExecutionStatusCompleted
+		exec.CompletedAt = &completedAt
+		exec.ExitCode = &result.ExitCode
+		exec.Stdout = result.Logs
+		exec.DurationMs = &durationMs
 	}
 	o.execMutex.Unlock()
+
+	// Save to database
+	if exists && o.db != nil {
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to save execution results to database", zap.Error(err), zap.String("execution_id", execID))
+		}
+	}
 
 	o.logger.Info("execution completed",
 		zap.String("exec_id", execID),
@@ -1014,20 +1138,29 @@ func (o *Orchestrator) runWithStandbyPod(ctx context.Context, execID string, sta
 	completedAt := time.Now()
 	durationMs := duration.Milliseconds()
 	o.execMutex.Lock()
-	if e, exists := o.executions[execID]; exists {
+	var exec *models.Execution
+	var exists bool
+	if exec, exists = o.executions[execID]; exists {
 		if err != nil {
-			e.Status = models.ExecutionStatusFailed
-			e.Error = err.Error()
+			exec.Status = models.ExecutionStatusFailed
+			exec.Error = err.Error()
 		} else {
-			e.Status = models.ExecutionStatusCompleted
+			exec.Status = models.ExecutionStatusCompleted
 		}
-		e.CompletedAt = &completedAt
-		e.ExitCode = &exitCode
-		e.Stdout = stdoutBuf.String()
-		e.Stderr = stderrBuf.String()
-		e.DurationMs = &durationMs
+		exec.CompletedAt = &completedAt
+		exec.ExitCode = &exitCode
+		exec.Stdout = stdoutBuf.String()
+		exec.Stderr = stderrBuf.String()
+		exec.DurationMs = &durationMs
 	}
 	o.execMutex.Unlock()
+
+	// Save to database
+	if exists && o.db != nil {
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to save execution results to database", zap.Error(err), zap.String("execution_id", execID))
+		}
+	}
 
 	o.logger.Info("execution completed (standby pod)",
 		zap.String("exec_id", execID),
@@ -1039,6 +1172,20 @@ func (o *Orchestrator) runWithStandbyPod(ctx context.Context, execID string, sta
 
 // GetExecution retrieves an execution by ID
 func (o *Orchestrator) GetExecution(ctx context.Context, execID string) (*models.Execution, error) {
+	// Try database first (for persistence across restarts)
+	if o.db != nil {
+		if exec, err := o.db.GetExecution(ctx, execID); err == nil {
+			// Also update in-memory cache
+			o.execMutex.Lock()
+			o.executions[execID] = exec
+			o.execMutex.Unlock()
+			// Return a copy
+			execCopy := *exec
+			return &execCopy, nil
+		}
+	}
+
+	// Fallback to in-memory
 	o.execMutex.RLock()
 	exec, exists := o.executions[execID]
 	o.execMutex.RUnlock()
@@ -1061,6 +1208,53 @@ func (o *Orchestrator) ListExecutions(ctx context.Context, envID string, limit i
 		limit = 1000
 	}
 
+	// Try database first (for persistence across restarts)
+	var execs []*models.Execution
+	var err error
+	if o.db != nil {
+		execs, err = o.db.ListExecutions(ctx, envID, limit)
+		if err == nil {
+			// Update in-memory cache
+			o.execMutex.Lock()
+			for _, exec := range execs {
+				o.executions[exec.ID] = exec
+			}
+			o.execMutex.Unlock()
+
+			// Convert to response format
+			executions := make([]models.ExecutionResponse, len(execs))
+			for i, exec := range execs {
+				executions[i] = models.ExecutionResponse{
+					ID:            exec.ID,
+					EnvironmentID: exec.EnvironmentID,
+					Status:        exec.Status,
+					CreatedAt:     exec.CreatedAt,
+					StartedAt:     exec.StartedAt,
+					CompletedAt:   exec.CompletedAt,
+					ExitCode:      exec.ExitCode,
+					Stdout:        exec.Stdout,
+					Stderr:        exec.Stderr,
+					Error:         exec.Error,
+					DurationMs:    exec.DurationMs,
+				}
+			}
+
+			o.logger.Debug("listing executions from database",
+				zap.String("environment_id", envID),
+				zap.Int("count", len(executions)),
+				zap.Int("limit", limit),
+			)
+
+			return &models.ExecutionListResponse{
+				Executions: executions,
+				Total:      len(executions),
+			}, nil
+		}
+		// Fall through to in-memory if database query fails
+		o.logger.Warn("failed to list executions from database, falling back to in-memory", zap.Error(err))
+	}
+
+	// Fallback to in-memory
 	o.execMutex.RLock()
 	var executions []models.ExecutionResponse
 	totalInMap := len(o.executions)
@@ -1094,7 +1288,7 @@ func (o *Orchestrator) ListExecutions(ctx context.Context, envID string, limit i
 		executions = executions[:limit]
 	}
 
-	o.logger.Debug("listing executions",
+	o.logger.Debug("listing executions from memory",
 		zap.String("environment_id", envID),
 		zap.Int("total_in_map", totalInMap),
 		zap.Int("matched", len(executions)),
@@ -1132,6 +1326,13 @@ func (o *Orchestrator) CancelExecution(ctx context.Context, execID string) error
 	podName := exec.PodName
 	o.execMutex.Unlock()
 
+	// Save to database
+	if o.db != nil {
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to save canceled execution to database", zap.Error(err), zap.String("execution_id", execID))
+		}
+	}
+
 	// Try to delete the pod if it exists
 	if podName != "" && namespace != "" {
 		if err := o.k8sClient.DeletePod(ctx, namespace, podName, true); err != nil {
@@ -1152,9 +1353,9 @@ func (o *Orchestrator) CancelExecution(ctx context.Context, execID string) error
 // updateExecutionStatus updates the status of an execution
 func (o *Orchestrator) updateExecutionStatus(execID string, status models.ExecutionStatus, timestamp *time.Time) {
 	o.execMutex.Lock()
-	defer o.execMutex.Unlock()
-
-	if exec, exists := o.executions[execID]; exists {
+	var exec *models.Execution
+	var exists bool
+	if exec, exists = o.executions[execID]; exists {
 		exec.Status = status
 		if timestamp != nil {
 			switch status {
@@ -1167,18 +1368,36 @@ func (o *Orchestrator) updateExecutionStatus(execID string, status models.Execut
 			}
 		}
 	}
+	o.execMutex.Unlock()
+
+	// Save to database
+	if exists && o.db != nil {
+		ctx := context.Background()
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to update execution status in database", zap.Error(err), zap.String("execution_id", execID))
+		}
+	}
 }
 
 // updateExecutionError marks an execution as failed with an error message
 func (o *Orchestrator) updateExecutionError(execID string, errMsg string) {
 	now := time.Now()
 	o.execMutex.Lock()
-	defer o.execMutex.Unlock()
-
-	if exec, exists := o.executions[execID]; exists {
+	var exec *models.Execution
+	var exists bool
+	if exec, exists = o.executions[execID]; exists {
 		exec.Status = models.ExecutionStatusFailed
 		exec.CompletedAt = &now
 		exec.Error = errMsg
+	}
+	o.execMutex.Unlock()
+
+	// Save to database
+	if exists && o.db != nil {
+		ctx := context.Background()
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to update execution error in database", zap.Error(err), zap.String("execution_id", execID))
+		}
 	}
 }
 
