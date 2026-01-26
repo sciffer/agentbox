@@ -686,9 +686,9 @@ func (o *Orchestrator) ensureEphemeralNamespace(ctx context.Context) error {
 	if err := o.k8sClient.CreateResourceQuota(
 		ctx,
 		o.ephemeralNamespace,
-		"10",    // 10 CPUs total
-		"10Gi",  // 10Gi memory total
-		"20Gi",  // 20Gi storage total
+		"10",   // 10 CPUs total
+		"10Gi", // 10Gi memory total
+		"20Gi", // 20Gi storage total
 	); err != nil {
 		o.logger.Warn("failed to create resource quota for ephemeral namespace (may already exist)",
 			zap.Error(err),
