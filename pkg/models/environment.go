@@ -108,18 +108,86 @@ type CreateEnvironmentRequest struct {
 	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
 }
 
-// ExecRequest is the request body for executing a command
+// ExecRequest is the request body for executing a command in an existing environment
 type ExecRequest struct {
 	Command []string `json:"command" validate:"required,min=1"`
 	Timeout int      `json:"timeout,omitempty"`
 }
 
-// ExecResponse is the response from executing a command
+// EphemeralExecRequest is the request body for executing a command in a new isolated pod
+// The pod inherits configuration from the referenced environment (image, resources, isolation, etc.)
+// A new pod is created, the command runs, and the pod is deleted automatically
+type EphemeralExecRequest struct {
+	EnvironmentID string            `json:"environment_id" validate:"required"`
+	Command       []string          `json:"command" validate:"required,min=1"`
+	Timeout       int               `json:"timeout,omitempty"`
+	Env           map[string]string `json:"env,omitempty"` // Additional env vars (merged with environment's)
+}
+
+// ExecResponse is the response from executing a command synchronously
 type ExecResponse struct {
 	Stdout     string `json:"stdout"`
 	Stderr     string `json:"stderr"`
 	ExitCode   int    `json:"exit_code"`
 	DurationMs int64  `json:"duration_ms"`
+}
+
+// ExecutionStatus represents the current state of an async execution
+type ExecutionStatus string
+
+const (
+	ExecutionStatusPending   ExecutionStatus = "pending"
+	ExecutionStatusQueued    ExecutionStatus = "queued"
+	ExecutionStatusRunning   ExecutionStatus = "running"
+	ExecutionStatusCompleted ExecutionStatus = "completed"
+	ExecutionStatusFailed    ExecutionStatus = "failed"
+	ExecutionStatusCancelled ExecutionStatus = "cancelled"
+)
+
+// Execution represents an async command execution
+type Execution struct {
+	ID            string            `json:"id"`
+	EnvironmentID string            `json:"environment_id"`
+	Command       []string          `json:"command"`
+	Env           map[string]string `json:"env,omitempty"`
+	Status        ExecutionStatus   `json:"status"`
+	UserID        string            `json:"user_id,omitempty"`
+	PodName       string            `json:"pod_name,omitempty"`
+	Namespace     string            `json:"namespace,omitempty"`
+
+	// Timestamps
+	CreatedAt   time.Time  `json:"created_at"`
+	QueuedAt    *time.Time `json:"queued_at,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+
+	// Result (populated when completed)
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	Stdout     string `json:"stdout,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
+	Error      string `json:"error,omitempty"`
+	DurationMs *int64 `json:"duration_ms,omitempty"`
+}
+
+// ExecutionResponse is the API response for execution status
+type ExecutionResponse struct {
+	ID            string          `json:"id"`
+	EnvironmentID string          `json:"environment_id"`
+	Status        ExecutionStatus `json:"status"`
+	CreatedAt     time.Time       `json:"created_at"`
+	StartedAt     *time.Time      `json:"started_at,omitempty"`
+	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
+	ExitCode      *int            `json:"exit_code,omitempty"`
+	Stdout        string          `json:"stdout,omitempty"`
+	Stderr        string          `json:"stderr,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	DurationMs    *int64          `json:"duration_ms,omitempty"`
+}
+
+// ExecutionListResponse is the response for listing executions
+type ExecutionListResponse struct {
+	Executions []ExecutionResponse `json:"executions"`
+	Total      int                 `json:"total"`
 }
 
 // ListEnvironmentsResponse is the response for listing environments

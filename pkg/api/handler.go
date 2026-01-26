@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -157,6 +158,152 @@ func (h *Handler) ExecuteCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, resp)
+}
+
+// SubmitExecution handles POST /environments/{id}/run
+// This queues an async execution that creates a new isolated pod using the environment's configuration
+// Returns immediately with execution ID for polling
+func (h *Handler) SubmitExecution(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	envID := vars["id"]
+
+	// Limit request body size
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64KB limit
+
+	var req models.EphemeralExecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	defer r.Body.Close()
+
+	// Set environment ID from URL path
+	req.EnvironmentID = envID
+
+	// Validate required fields
+	if len(req.Command) == 0 {
+		h.respondError(w, http.StatusBadRequest, "command is required", nil)
+		return
+	}
+
+	// Get user ID from context
+	userID := getUserIDFromContext(ctx)
+
+	// Submit execution (returns immediately)
+	orchReq := &orchestrator.EphemeralExecRequest{
+		EnvironmentID: envID,
+		Command:       req.Command,
+		Timeout:       req.Timeout,
+		Env:           req.Env,
+	}
+
+	h.logger.Info("submitting execution",
+		zap.String("environment_id", envID),
+		zap.Strings("command", req.Command),
+		zap.String("user_id", userID),
+	)
+
+	exec, err := h.orchestrator.SubmitExecution(ctx, orchReq, userID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "environment not found", err)
+		} else if strings.Contains(err.Error(), "not running") {
+			h.respondError(w, http.StatusBadRequest, "environment is not running", err)
+		} else {
+			h.respondError(w, http.StatusInternalServerError, "failed to submit execution", err)
+		}
+		return
+	}
+
+	// Return execution status
+	resp := models.ExecutionResponse{
+		ID:            exec.ID,
+		EnvironmentID: exec.EnvironmentID,
+		Status:        exec.Status,
+		CreatedAt:     exec.CreatedAt,
+	}
+
+	h.respondJSON(w, http.StatusAccepted, resp)
+}
+
+// GetExecution handles GET /executions/{id}
+// Returns the current status and result of an execution
+func (h *Handler) GetExecution(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	execID := vars["id"]
+
+	exec, err := h.orchestrator.GetExecution(ctx, execID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "execution not found", err)
+		} else {
+			h.respondError(w, http.StatusInternalServerError, "failed to get execution", err)
+		}
+		return
+	}
+
+	resp := models.ExecutionResponse{
+		ID:            exec.ID,
+		EnvironmentID: exec.EnvironmentID,
+		Status:        exec.Status,
+		CreatedAt:     exec.CreatedAt,
+		StartedAt:     exec.StartedAt,
+		CompletedAt:   exec.CompletedAt,
+		ExitCode:      exec.ExitCode,
+		Stdout:        exec.Stdout,
+		Stderr:        exec.Stderr,
+		Error:         exec.Error,
+		DurationMs:    exec.DurationMs,
+	}
+
+	h.respondJSON(w, http.StatusOK, resp)
+}
+
+// ListExecutions handles GET /environments/{id}/executions
+// Returns list of executions for an environment
+func (h *Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	envID := vars["id"]
+
+	// Parse limit parameter
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	resp, err := h.orchestrator.ListExecutions(ctx, envID, limit)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "failed to list executions", err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, resp)
+}
+
+// CancelExecution handles DELETE /executions/{id}
+// Cancels a pending or running execution
+func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	execID := vars["id"]
+
+	if err := h.orchestrator.CancelExecution(ctx, execID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "execution not found", err)
+		} else if strings.Contains(err.Error(), "cannot be cancelled") {
+			h.respondError(w, http.StatusBadRequest, err.Error(), nil)
+		} else {
+			h.respondError(w, http.StatusInternalServerError, "failed to cancel execution", err)
+		}
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
 // DeleteEnvironment handles DELETE /environments/{id}

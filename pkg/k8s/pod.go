@@ -352,3 +352,62 @@ func (c *Client) ListPods(ctx context.Context, namespace string, labelSelector s
 
 	return pods, nil
 }
+
+// WaitForPodCompletion waits for a pod to complete (succeed or fail) and returns the result
+func (c *Client) WaitForPodCompletion(ctx context.Context, namespace, name string) (*PodCompletionResult, error) {
+	watch, err := c.clientset.CoreV1().Pods(namespace).Watch(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", name),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to watch pod: %w", err)
+	}
+	defer watch.Stop()
+
+	for {
+		select {
+		case event := <-watch.ResultChan():
+			if event.Object == nil {
+				return nil, fmt.Errorf("watch channel closed")
+			}
+
+			pod, ok := event.Object.(*corev1.Pod)
+			if !ok {
+				continue
+			}
+
+			switch pod.Status.Phase {
+			case corev1.PodSucceeded, corev1.PodFailed:
+				// Pod completed, get logs
+				logs, err := c.GetPodLogs(ctx, namespace, name, nil)
+				if err != nil {
+					logs = fmt.Sprintf("(failed to get logs: %v)", err)
+				}
+
+				exitCode := 0
+				if pod.Status.Phase == corev1.PodFailed {
+					exitCode = 1
+					// Try to get more specific exit code
+					if len(pod.Status.ContainerStatuses) > 0 {
+						cs := pod.Status.ContainerStatuses[0]
+						if cs.State.Terminated != nil {
+							exitCode = int(cs.State.Terminated.ExitCode)
+						}
+					}
+				}
+
+				return &PodCompletionResult{
+					Phase:    pod.Status.Phase,
+					ExitCode: exitCode,
+					Logs:     logs,
+				}, nil
+
+			case corev1.PodPending, corev1.PodRunning:
+				// Still running, continue waiting
+				continue
+			}
+
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout waiting for pod completion: %w", ctx.Err())
+		}
+	}
+}

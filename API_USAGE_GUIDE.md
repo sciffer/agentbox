@@ -256,9 +256,205 @@ curl -X DELETE "https://your-server/api/v1/environments/env-abc123?force=false" 
 
 ## Command Execution
 
-### Execute a Command
+AgentBox supports two modes of command execution:
 
-Execute a command in a running environment and receive the output.
+1. **Async Isolated Execution** (`POST /environments/{id}/run`) - Queues a new isolated pod that inherits the environment's configuration. Returns immediately with an execution ID for polling. Each request gets its own pod. **Best for untrusted code**.
+2. **Sync Shared Execution** (`POST /environments/{id}/exec`) - Executes commands in the environment's existing pod. Blocks until complete. Commands share state. **Best for interactive sessions**.
+
+### Async Isolated Execution (New Pod per Request)
+
+Submit a command for execution in a fresh, isolated pod. The request returns immediately with an execution ID, and you poll for status/results. The pod inherits all settings from the environment (image, resources, network policy, security context, etc.).
+
+**Step 1: Create an environment (defines the configuration)**
+
+```bash
+curl -X POST https://your-server/api/v1/environments \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "python-sandbox",
+    "image": "python:3.11-slim",
+    "resources": { "cpu": "500m", "memory": "512Mi", "storage": "1Gi" },
+    "isolation": {
+      "runtime_class": "gvisor",
+      "network_policy": { "allow_internet": false }
+    }
+  }'
+# Response: { "id": "env-abc123", ... }
+```
+
+**Step 2: Submit execution (returns immediately)**
+
+```bash
+curl -X POST https://your-server/api/v1/environments/env-abc123/run \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "command": ["python", "-c", "print(\"Hello from isolated pod!\")"],
+    "timeout": 60
+  }'
+```
+
+**Response (HTTP 202 Accepted):**
+
+```json
+{
+  "id": "exec-a1b2c3d4",
+  "environment_id": "env-abc123",
+  "status": "pending",
+  "created_at": "2026-01-22T10:00:00Z"
+}
+```
+
+**Step 3: Poll for status**
+
+```bash
+curl -X GET https://your-server/api/v1/executions/exec-a1b2c3d4 \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response (while running):**
+
+```json
+{
+  "id": "exec-a1b2c3d4",
+  "environment_id": "env-abc123",
+  "status": "running",
+  "created_at": "2026-01-22T10:00:00Z",
+  "started_at": "2026-01-22T10:00:02Z"
+}
+```
+
+**Response (when completed):**
+
+```json
+{
+  "id": "exec-a1b2c3d4",
+  "environment_id": "env-abc123",
+  "status": "completed",
+  "created_at": "2026-01-22T10:00:00Z",
+  "started_at": "2026-01-22T10:00:02Z",
+  "completed_at": "2026-01-22T10:00:05Z",
+  "exit_code": 0,
+  "stdout": "Hello from isolated pod!\n",
+  "stderr": "",
+  "duration_ms": 2500
+}
+```
+
+**Request Body (POST /environments/{id}/run):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string[] | Yes | Command and arguments to execute |
+| `timeout` | int | No | Timeout in seconds (default: 300, max: 3600) |
+| `env` | object | No | Additional environment variables (merged with environment's) |
+
+**Execution Status Values:**
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Execution created, waiting to be processed |
+| `queued` | Waiting for available capacity (semaphore) |
+| `running` | Pod created and command is executing |
+| `completed` | Execution finished successfully |
+| `failed` | Execution failed (see `error` field) |
+| `cancelled` | Execution was cancelled by user |
+
+**What is inherited from the environment:**
+- Image
+- Resource limits (CPU, memory, storage)
+- Runtime class (gVisor, Kata, etc.)
+- Network policy
+- Security context (run as user, read-only filesystem, etc.)
+- Node selector and tolerations
+- Environment variables (request env vars are merged/override)
+- Labels
+
+### List Executions
+
+List all executions for an environment:
+
+```bash
+curl -X GET "https://your-server/api/v1/environments/env-abc123/executions?limit=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response:**
+
+```json
+{
+  "executions": [
+    {
+      "id": "exec-a1b2c3d4",
+      "environment_id": "env-abc123",
+      "status": "completed",
+      "created_at": "2026-01-22T10:00:00Z",
+      "exit_code": 0
+    },
+    {
+      "id": "exec-e5f6g7h8",
+      "environment_id": "env-abc123",
+      "status": "running",
+      "created_at": "2026-01-22T10:01:00Z"
+    }
+  ],
+  "total": 2
+}
+```
+
+### Cancel Execution
+
+Cancel a pending or running execution:
+
+```bash
+curl -X DELETE https://your-server/api/v1/executions/exec-a1b2c3d4 \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response:**
+
+```json
+{
+  "status": "cancelled"
+}
+```
+
+### Parallel Execution Example
+
+```bash
+# Submit multiple executions - they queue and run in separate isolated pods
+exec1=$(curl -s -X POST https://your-server/api/v1/environments/env-abc123/run \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["python", "-c", "import time; time.sleep(5); print(\"Pod 1\")"]}' | jq -r '.id')
+
+exec2=$(curl -s -X POST https://your-server/api/v1/environments/env-abc123/run \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["python", "-c", "import time; time.sleep(5); print(\"Pod 2\")"]}' | jq -r '.id')
+
+exec3=$(curl -s -X POST https://your-server/api/v1/environments/env-abc123/run \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["python", "-c", "import time; time.sleep(5); print(\"Pod 3\")"]}' | jq -r '.id')
+
+# Poll for results
+while true; do
+  status=$(curl -s https://your-server/api/v1/executions/$exec1 -H "Authorization: Bearer <token>" | jq -r '.status')
+  echo "Execution 1: $status"
+  [[ "$status" == "completed" || "$status" == "failed" ]] && break
+  sleep 2
+done
+```
+
+> **Note:** Each execution creates a new pod in the environment's namespace. Pods are isolated from each other (separate processes, filesystems) and inherit the environment's network policy and resource quotas. Up to 10 executions can run concurrently; additional requests are queued.
+
+---
+
+### Sync Execute in Existing Pod (Shared State)
+
+Execute a command in the environment's existing pod. This is a synchronous call that blocks until the command completes. Commands share the same filesystem and process space, which is faster but less isolated.
 
 ```bash
 curl -X POST https://your-server/api/v1/environments/env-abc123/exec \

@@ -7,6 +7,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// PodCompletionResult contains the result of a pod that ran to completion
+type PodCompletionResult struct {
+	Phase    corev1.PodPhase
+	ExitCode int
+	Logs     string
+}
+
 // ClientInterface defines the interface for Kubernetes client operations
 // This allows for easier testing with mocks
 type ClientInterface interface {
@@ -23,6 +30,7 @@ type ClientInterface interface {
 	GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error)
 	DeletePod(ctx context.Context, namespace, name string, force bool) error
 	WaitForPodRunning(ctx context.Context, namespace, name string) error
+	WaitForPodCompletion(ctx context.Context, namespace, name string) (*PodCompletionResult, error)
 	ExecInPod(ctx context.Context, namespace, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error
 	GetPodLogs(ctx context.Context, namespace, podName string, tailLines *int64) (string, error)
 	StreamPodLogs(ctx context.Context, namespace, podName string, tailLines *int64, follow bool) (io.ReadCloser, error)

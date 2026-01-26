@@ -6,7 +6,10 @@ import {
   UpdateUserData, 
   GrantPermissionData,
   CreateAPIKeyData,
-  APIKeyPermission
+  APIKeyPermission,
+  SubmitExecutionData,
+  Execution,
+  ExecutionListResponse
 } from '../types'
 
 // Runtime config from window.AGENTBOX_CONFIG (set by Docker entrypoint)
@@ -107,7 +110,7 @@ export const environmentsAPI = {
   delete: async (id: string, force?: boolean) => {
     await apiClient.delete(`/environments/${id}`, { params: { force } })
   },
-  exec: async (id: string, command: string, timeout?: number) => {
+  exec: async (id: string, command: string[], timeout?: number) => {
     const response = await apiClient.post(`/environments/${id}/exec`, {
       command,
       timeout,
@@ -117,6 +120,29 @@ export const environmentsAPI = {
   getLogs: async (id: string, params?: { tail?: number; follow?: boolean; timestamps?: boolean }) => {
     const response = await apiClient.get(`/environments/${id}/logs`, { params })
     return response.data
+  },
+}
+
+// Executions API (async isolated pod execution)
+export const executionsAPI = {
+  // Submit a new execution (returns immediately with execution ID)
+  submit: async (environmentId: string, data: SubmitExecutionData): Promise<Execution> => {
+    const response = await apiClient.post(`/environments/${environmentId}/run`, data)
+    return response.data
+  },
+  // Get execution status and results
+  get: async (id: string): Promise<Execution> => {
+    const response = await apiClient.get(`/executions/${id}`)
+    return response.data
+  },
+  // List executions for an environment
+  list: async (environmentId: string, params?: { limit?: number }): Promise<ExecutionListResponse> => {
+    const response = await apiClient.get(`/environments/${environmentId}/executions`, { params })
+    return response.data
+  },
+  // Cancel an execution
+  cancel: async (id: string): Promise<void> => {
+    await apiClient.delete(`/executions/${id}`)
   },
 }
 

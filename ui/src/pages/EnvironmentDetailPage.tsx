@@ -30,6 +30,7 @@ import {
 import { environmentsAPI } from '../services/api'
 import TerminalView from '../components/common/TerminalView'
 import LogViewer from '../components/common/LogViewer'
+import ExecutionPanel from '../components/common/ExecutionPanel'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -94,6 +95,7 @@ export default function EnvironmentDetailPage() {
       <Paper sx={{ mt: 2 }}>
         <Tabs value={tab} onChange={(_, newValue) => setTab(newValue)}>
           <Tab label="Overview" />
+          <Tab label="Executions" />
           <Tab label="Terminal" />
           <Tab label="Logs" />
         </Tabs>
@@ -318,9 +320,12 @@ export default function EnvironmentDetailPage() {
           </Box>
         </TabPanel>
         <TabPanel value={tab} index={1}>
-          <TerminalView environmentId={id!} />
+          <ExecutionPanel environmentId={id!} />
         </TabPanel>
         <TabPanel value={tab} index={2}>
+          <TerminalView environmentId={id!} />
+        </TabPanel>
+        <TabPanel value={tab} index={3}>
           <LogViewer environmentId={id!} />
         </TabPanel>
       </Paper>

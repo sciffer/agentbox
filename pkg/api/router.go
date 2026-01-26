@@ -42,10 +42,17 @@ func NewRouter(configOrHandler interface{}, proxyHandlerOrNil ...*proxy.Proxy) *
 		api.HandleFunc("/environments/{id}", handler.GetEnvironment).Methods("GET")
 		api.HandleFunc("/environments/{id}", handler.DeleteEnvironment).Methods("DELETE")
 		api.HandleFunc("/environments/{id}/exec", handler.ExecuteCommand).Methods("POST")
+		// Async execution (queues isolated pod execution, returns execution ID)
+		api.HandleFunc("/environments/{id}/run", handler.SubmitExecution).Methods("POST")
+		api.HandleFunc("/environments/{id}/executions", handler.ListExecutions).Methods("GET")
 		if proxyHandler != nil {
 			api.HandleFunc("/environments/{id}/attach", handler.AttachWebSocket(proxyHandler)).Methods("GET")
 		}
 		api.HandleFunc("/environments/{id}/logs", handler.GetLogs).Methods("GET")
+
+		// Execution status routes
+		api.HandleFunc("/executions/{id}", handler.GetExecution).Methods("GET")
+		api.HandleFunc("/executions/{id}", handler.CancelExecution).Methods("DELETE")
 
 		return r
 	}
@@ -75,11 +82,19 @@ func NewRouter(configOrHandler interface{}, proxyHandlerOrNil ...*proxy.Proxy) *
 	protected.HandleFunc("/environments", config.Handler.ListEnvironments).Methods("GET")
 	protected.HandleFunc("/environments/{id}", config.Handler.GetEnvironment).Methods("GET")
 	protected.HandleFunc("/environments/{id}", config.Handler.DeleteEnvironment).Methods("DELETE")
+	// Execute in existing pod (shares state between commands)
 	protected.HandleFunc("/environments/{id}/exec", config.Handler.ExecuteCommand).Methods("POST")
+	// Async execution (queues isolated pod execution, returns execution ID)
+	protected.HandleFunc("/environments/{id}/run", config.Handler.SubmitExecution).Methods("POST")
+	protected.HandleFunc("/environments/{id}/executions", config.Handler.ListExecutions).Methods("GET")
 	if config.ProxyHandler != nil {
 		protected.HandleFunc("/environments/{id}/attach", config.Handler.AttachWebSocket(config.ProxyHandler)).Methods("GET")
 	}
 	protected.HandleFunc("/environments/{id}/logs", config.Handler.GetLogs).Methods("GET")
+
+	// Execution status routes (protected)
+	protected.HandleFunc("/executions/{id}", config.Handler.GetExecution).Methods("GET")
+	protected.HandleFunc("/executions/{id}", config.Handler.CancelExecution).Methods("DELETE")
 
 	// User management routes (protected, admin only)
 	protected.HandleFunc("/users", config.UserHandler.ListUsers).Methods("GET")

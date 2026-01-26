@@ -30,6 +30,9 @@ type Orchestrator struct {
 	// provisionSem limits concurrent environment provisioning to prevent
 	// overwhelming the Kubernetes API with too many parallel requests
 	provisionSem chan struct{}
+	// executions tracks async command executions
+	executions map[string]*models.Execution
+	execMutex  sync.RWMutex
 }
 
 // MaxConcurrentProvisions is the maximum number of environments that can be
@@ -45,6 +48,7 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) 
 		environments:    make(map[string]*models.Environment),
 		namespacePrefix: cfg.Kubernetes.NamespacePrefix,
 		provisionSem:    make(chan struct{}, MaxConcurrentProvisions),
+		executions:      make(map[string]*models.Execution),
 	}
 }
 
@@ -606,4 +610,369 @@ func (o *Orchestrator) executeInPod(ctx context.Context, namespace, podName stri
 	}
 
 	return stdoutBuf.String(), stderrBuf.String(), 0, nil
+}
+
+// EphemeralExecRequest contains parameters for ephemeral execution
+type EphemeralExecRequest struct {
+	EnvironmentID string            `json:"environment_id"` // Reference to environment for config
+	Command       []string          `json:"command"`
+	Timeout       int               `json:"timeout,omitempty"`
+	Env           map[string]string `json:"env,omitempty"` // Additional env vars (merged with environment's)
+}
+
+// SubmitExecution queues an async execution and returns immediately with the execution ID
+// The execution runs in a goroutine and can be polled for status via GetExecution
+func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRequest, userID string) (*models.Execution, error) {
+	// Look up the environment to inherit its configuration
+	env, err := o.GetEnvironment(ctx, req.EnvironmentID)
+	if err != nil {
+		return nil, fmt.Errorf("environment not found: %w", err)
+	}
+
+	// Verify environment is running
+	if env.Status != models.StatusRunning {
+		return nil, fmt.Errorf("environment is not running (status: %s)", env.Status)
+	}
+
+	// Generate unique execution ID
+	execID := "exec-" + uuid.New().String()[:8]
+	podName := execID // Use same name for pod
+
+	now := time.Now()
+	exec := &models.Execution{
+		ID:            execID,
+		EnvironmentID: req.EnvironmentID,
+		Command:       req.Command,
+		Env:           req.Env,
+		Status:        models.ExecutionStatusPending,
+		UserID:        userID,
+		PodName:       podName,
+		Namespace:     env.Namespace,
+		CreatedAt:     now,
+	}
+
+	// Store execution
+	o.execMutex.Lock()
+	o.executions[execID] = exec
+	o.execMutex.Unlock()
+
+	o.logger.Info("execution submitted",
+		zap.String("exec_id", execID),
+		zap.String("environment_id", req.EnvironmentID),
+		zap.Strings("command", req.Command),
+		zap.String("user_id", userID),
+	)
+
+	// Run execution in background
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = 300 // Default 5 minutes
+	}
+	if timeout > 3600 {
+		timeout = 3600 // Max 1 hour
+	}
+
+	go o.runExecution(execID, env, req, timeout)
+
+	// Return a copy to avoid race conditions
+	execCopy := *exec
+	return &execCopy, nil
+}
+
+// runExecution runs the actual pod execution in the background
+func (o *Orchestrator) runExecution(execID string, env *models.Environment, req *EphemeralExecRequest, timeout int) {
+	// Create timeout context for the execution
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	// Update status to queued (waiting for semaphore)
+	o.updateExecutionStatus(execID, models.ExecutionStatusQueued, nil)
+
+	// Acquire semaphore to limit concurrent executions
+	select {
+	case o.provisionSem <- struct{}{}:
+		defer func() { <-o.provisionSem }()
+	case <-ctx.Done():
+		o.updateExecutionError(execID, "timeout waiting in queue")
+		return
+	}
+
+	// Update status to running
+	now := time.Now()
+	o.execMutex.Lock()
+	if exec, exists := o.executions[execID]; exists {
+		exec.Status = models.ExecutionStatusRunning
+		exec.StartedAt = &now
+		exec.QueuedAt = &now
+	}
+	o.execMutex.Unlock()
+
+	// Get execution record for pod name
+	o.execMutex.RLock()
+	exec := o.executions[execID]
+	podName := exec.PodName
+	namespace := exec.Namespace
+	o.execMutex.RUnlock()
+
+	o.logger.Info("starting execution",
+		zap.String("exec_id", execID),
+		zap.String("pod", podName),
+		zap.String("namespace", namespace),
+		zap.String("image", env.Image),
+	)
+
+	// Labels for the pod
+	labels := map[string]string{
+		"app":            "agentbox",
+		"exec-id":        execID,
+		"managed-by":     "agentbox",
+		"type":           "ephemeral",
+		"user-id":        exec.UserID,
+		"environment-id": req.EnvironmentID,
+	}
+	for k, v := range env.Labels {
+		labels[k] = v
+	}
+
+	// Merge environment variables
+	mergedEnv := make(map[string]string)
+	for k, v := range env.Env {
+		mergedEnv[k] = v
+	}
+	for k, v := range req.Env {
+		mergedEnv[k] = v
+	}
+
+	// Determine runtime class
+	runtimeClass := o.config.Kubernetes.RuntimeClass
+	if env.Isolation != nil && env.Isolation.RuntimeClass != "" {
+		runtimeClass = env.Isolation.RuntimeClass
+	}
+
+	// Convert security context
+	var securityContext *k8s.SecurityContext
+	if env.Isolation != nil && env.Isolation.SecurityContext != nil {
+		securityContext = &k8s.SecurityContext{
+			RunAsUser:                env.Isolation.SecurityContext.RunAsUser,
+			RunAsGroup:               env.Isolation.SecurityContext.RunAsGroup,
+			RunAsNonRoot:             env.Isolation.SecurityContext.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   env.Isolation.SecurityContext.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: env.Isolation.SecurityContext.AllowPrivilegeEscalation,
+		}
+	}
+
+	// Convert tolerations
+	var k8sTolerations []k8s.Toleration
+	for _, t := range env.Tolerations {
+		k8sTolerations = append(k8sTolerations, k8s.Toleration{
+			Key:               t.Key,
+			Operator:          t.Operator,
+			Value:             t.Value,
+			Effect:            t.Effect,
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+
+	// Create pod spec
+	podSpec := &k8s.PodSpec{
+		Name:            podName,
+		Namespace:       namespace,
+		Image:           env.Image,
+		Command:         req.Command,
+		Env:             mergedEnv,
+		CPU:             env.Resources.CPU,
+		Memory:          env.Resources.Memory,
+		Storage:         env.Resources.Storage,
+		RuntimeClass:    runtimeClass,
+		Labels:          labels,
+		NodeSelector:    env.NodeSelector,
+		Tolerations:     k8sTolerations,
+		SecurityContext: securityContext,
+	}
+
+	// Create pod
+	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
+		o.updateExecutionError(execID, fmt.Sprintf("failed to create pod: %v", err))
+		return
+	}
+
+	// Ensure pod cleanup
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := o.k8sClient.DeletePod(cleanupCtx, namespace, podName, true); err != nil {
+			o.logger.Warn("failed to cleanup ephemeral pod",
+				zap.String("exec_id", execID),
+				zap.String("pod", podName),
+				zap.Error(err),
+			)
+		} else {
+			o.logger.Debug("cleaned up ephemeral pod",
+				zap.String("exec_id", execID),
+				zap.String("pod", podName),
+			)
+		}
+	}()
+
+	// Wait for pod completion
+	startTime := time.Now()
+	result, err := o.k8sClient.WaitForPodCompletion(ctx, namespace, podName)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		o.updateExecutionError(execID, fmt.Sprintf("execution failed: %v", err))
+		return
+	}
+
+	// Update execution with results
+	completedAt := time.Now()
+	durationMs := duration.Milliseconds()
+	o.execMutex.Lock()
+	if e, exists := o.executions[execID]; exists {
+		e.Status = models.ExecutionStatusCompleted
+		e.CompletedAt = &completedAt
+		e.ExitCode = &result.ExitCode
+		e.Stdout = result.Logs
+		e.DurationMs = &durationMs
+	}
+	o.execMutex.Unlock()
+
+	o.logger.Info("execution completed",
+		zap.String("exec_id", execID),
+		zap.String("pod", podName),
+		zap.Int("exit_code", result.ExitCode),
+		zap.Int64("duration_ms", durationMs),
+	)
+}
+
+// GetExecution retrieves an execution by ID
+func (o *Orchestrator) GetExecution(ctx context.Context, execID string) (*models.Execution, error) {
+	o.execMutex.RLock()
+	exec, exists := o.executions[execID]
+	o.execMutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("execution not found")
+	}
+
+	// Return a copy
+	execCopy := *exec
+	return &execCopy, nil
+}
+
+// ListExecutions lists executions for an environment
+func (o *Orchestrator) ListExecutions(ctx context.Context, envID string, limit int) (*models.ExecutionListResponse, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	o.execMutex.RLock()
+	var executions []models.ExecutionResponse
+	for _, exec := range o.executions {
+		if envID != "" && exec.EnvironmentID != envID {
+			continue
+		}
+		executions = append(executions, models.ExecutionResponse{
+			ID:            exec.ID,
+			EnvironmentID: exec.EnvironmentID,
+			Status:        exec.Status,
+			CreatedAt:     exec.CreatedAt,
+			StartedAt:     exec.StartedAt,
+			CompletedAt:   exec.CompletedAt,
+			ExitCode:      exec.ExitCode,
+			Stdout:        exec.Stdout,
+			Stderr:        exec.Stderr,
+			Error:         exec.Error,
+			DurationMs:    exec.DurationMs,
+		})
+	}
+	o.execMutex.RUnlock()
+
+	// Apply limit
+	if len(executions) > limit {
+		executions = executions[:limit]
+	}
+
+	return &models.ExecutionListResponse{
+		Executions: executions,
+		Total:      len(executions),
+	}, nil
+}
+
+// CancelExecution cancels a running or queued execution
+func (o *Orchestrator) CancelExecution(ctx context.Context, execID string) error {
+	o.execMutex.Lock()
+	exec, exists := o.executions[execID]
+	if !exists {
+		o.execMutex.Unlock()
+		return fmt.Errorf("execution not found")
+	}
+
+	// Can only cancel pending, queued, or running executions
+	if exec.Status != models.ExecutionStatusPending &&
+		exec.Status != models.ExecutionStatusQueued &&
+		exec.Status != models.ExecutionStatusRunning {
+		o.execMutex.Unlock()
+		return fmt.Errorf("execution cannot be cancelled (status: %s)", exec.Status)
+	}
+
+	exec.Status = models.ExecutionStatusCancelled
+	now := time.Now()
+	exec.CompletedAt = &now
+	exec.Error = "cancelled by user"
+	namespace := exec.Namespace
+	podName := exec.PodName
+	o.execMutex.Unlock()
+
+	// Try to delete the pod if it exists
+	if podName != "" && namespace != "" {
+		if err := o.k8sClient.DeletePod(ctx, namespace, podName, true); err != nil {
+			o.logger.Warn("failed to delete pod for cancelled execution",
+				zap.String("exec_id", execID),
+				zap.Error(err),
+			)
+		}
+	}
+
+	o.logger.Info("execution cancelled",
+		zap.String("exec_id", execID),
+	)
+
+	return nil
+}
+
+// updateExecutionStatus updates the status of an execution
+func (o *Orchestrator) updateExecutionStatus(execID string, status models.ExecutionStatus, timestamp *time.Time) {
+	o.execMutex.Lock()
+	defer o.execMutex.Unlock()
+
+	if exec, exists := o.executions[execID]; exists {
+		exec.Status = status
+		if timestamp != nil {
+			switch status {
+			case models.ExecutionStatusQueued:
+				exec.QueuedAt = timestamp
+			case models.ExecutionStatusRunning:
+				exec.StartedAt = timestamp
+			case models.ExecutionStatusCompleted, models.ExecutionStatusFailed:
+				exec.CompletedAt = timestamp
+			}
+		}
+	}
+}
+
+// updateExecutionError marks an execution as failed with an error message
+func (o *Orchestrator) updateExecutionError(execID string, errMsg string) {
+	now := time.Now()
+	o.execMutex.Lock()
+	defer o.execMutex.Unlock()
+
+	if exec, exists := o.executions[execID]; exists {
+		exec.Status = models.ExecutionStatusFailed
+		exec.CompletedAt = &now
+		exec.Error = errMsg
+	}
 }
