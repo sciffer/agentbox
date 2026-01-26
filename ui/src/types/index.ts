@@ -98,6 +98,35 @@ export interface LogEntry {
   timestamp?: string
 }
 
+// Execution types for async isolated execution
+export type ExecutionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
+
+export interface Execution {
+  id: string
+  environment_id: string
+  status: ExecutionStatus
+  created_at: string
+  queued_at?: string
+  started_at?: string
+  completed_at?: string
+  exit_code?: number
+  stdout?: string
+  stderr?: string
+  error?: string
+  duration_ms?: number
+}
+
+export interface ExecutionListResponse {
+  executions: Execution[]
+  total: number
+}
+
+export interface SubmitExecutionData {
+  command: string[]
+  timeout?: number
+  env?: Record<string, string>
+}
+
 export interface CreateEnvironmentData {
   name: string
   image: string

@@ -201,6 +201,35 @@ func (m *MockK8sClient) WaitForPodRunning(ctx context.Context, namespace, name s
 	return fmt.Errorf("pod not found")
 }
 
+// WaitForPodCompletion simulates waiting for a pod to complete
+func (m *MockK8sClient) WaitForPodCompletion(ctx context.Context, namespace, name string) (*k8s.PodCompletionResult, error) {
+	// In mock, immediately mark as succeeded and return
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if pod, ok := pods[name]; ok {
+			pod.Status.Phase = corev1.PodSucceeded
+
+			// Get logs if available
+			logs := "mock execution output\n"
+			if podLogs, ok := m.podLogs[namespace]; ok {
+				if logContent, ok := podLogs[name]; ok {
+					logs = logContent
+				}
+			}
+
+			return &k8s.PodCompletionResult{
+				Phase:    corev1.PodSucceeded,
+				ExitCode: 0,
+				Logs:     logs,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("pod not found")
+}
+
 // ExecInPod simulates command execution in a pod
 func (m *MockK8sClient) ExecInPod(ctx context.Context,
 	namespace, podName string,
