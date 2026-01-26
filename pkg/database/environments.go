@@ -103,25 +103,39 @@ func (db *DB) GetEnvironment(ctx context.Context, id string) (*models.Environmen
 
 	// Deserialize JSON fields
 	if envVarsJSON.Valid {
-		_ = json.Unmarshal([]byte(envVarsJSON.String), &env.Env)
+		if err := json.Unmarshal([]byte(envVarsJSON.String), &env.Env); err != nil {
+			db.logger.Warn("failed to unmarshal env_vars", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 	if commandJSON.Valid {
-		_ = json.Unmarshal([]byte(commandJSON.String), &env.Command)
+		if err := json.Unmarshal([]byte(commandJSON.String), &env.Command); err != nil {
+			db.logger.Warn("failed to unmarshal command", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 	if labelsJSON.Valid {
-		_ = json.Unmarshal([]byte(labelsJSON.String), &env.Labels)
+		if err := json.Unmarshal([]byte(labelsJSON.String), &env.Labels); err != nil {
+			db.logger.Warn("failed to unmarshal labels", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 	if nodeSelectorJSON.Valid {
-		_ = json.Unmarshal([]byte(nodeSelectorJSON.String), &env.NodeSelector)
+		if err := json.Unmarshal([]byte(nodeSelectorJSON.String), &env.NodeSelector); err != nil {
+			db.logger.Warn("failed to unmarshal node_selector", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 	if tolerationsJSON.Valid {
-		_ = json.Unmarshal([]byte(tolerationsJSON.String), &env.Tolerations)
+		if err := json.Unmarshal([]byte(tolerationsJSON.String), &env.Tolerations); err != nil {
+			db.logger.Warn("failed to unmarshal tolerations", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 	if isolationJSON.Valid {
-		_ = json.Unmarshal([]byte(isolationJSON.String), &env.Isolation)
+		if err := json.Unmarshal([]byte(isolationJSON.String), &env.Isolation); err != nil {
+			db.logger.Warn("failed to unmarshal isolation_config", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 	if poolJSON.Valid {
-		_ = json.Unmarshal([]byte(poolJSON.String), &env.Pool)
+		if err := json.Unmarshal([]byte(poolJSON.String), &env.Pool); err != nil {
+			db.logger.Warn("failed to unmarshal pool_config", zap.Error(err), zap.String("environment_id", env.ID))
+		}
 	}
 
 	return &env, nil
@@ -164,25 +178,39 @@ func (db *DB) ListEnvironments(ctx context.Context, limit, offset int) ([]*model
 
 		// Deserialize JSON fields
 		if envVarsJSON.Valid {
-			_ = json.Unmarshal([]byte(envVarsJSON.String), &env.Env)
+			if err := json.Unmarshal([]byte(envVarsJSON.String), &env.Env); err != nil {
+				db.logger.Warn("failed to unmarshal env_vars", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 		if commandJSON.Valid {
-			_ = json.Unmarshal([]byte(commandJSON.String), &env.Command)
+			if err := json.Unmarshal([]byte(commandJSON.String), &env.Command); err != nil {
+				db.logger.Warn("failed to unmarshal command", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 		if labelsJSON.Valid {
-			_ = json.Unmarshal([]byte(labelsJSON.String), &env.Labels)
+			if err := json.Unmarshal([]byte(labelsJSON.String), &env.Labels); err != nil {
+				db.logger.Warn("failed to unmarshal labels", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 		if nodeSelectorJSON.Valid {
-			_ = json.Unmarshal([]byte(nodeSelectorJSON.String), &env.NodeSelector)
+			if err := json.Unmarshal([]byte(nodeSelectorJSON.String), &env.NodeSelector); err != nil {
+				db.logger.Warn("failed to unmarshal node_selector", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 		if tolerationsJSON.Valid {
-			_ = json.Unmarshal([]byte(tolerationsJSON.String), &env.Tolerations)
+			if err := json.Unmarshal([]byte(tolerationsJSON.String), &env.Tolerations); err != nil {
+				db.logger.Warn("failed to unmarshal tolerations", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 		if isolationJSON.Valid {
-			_ = json.Unmarshal([]byte(isolationJSON.String), &env.Isolation)
+			if err := json.Unmarshal([]byte(isolationJSON.String), &env.Isolation); err != nil {
+				db.logger.Warn("failed to unmarshal isolation_config", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 		if poolJSON.Valid {
-			_ = json.Unmarshal([]byte(poolJSON.String), &env.Pool)
+			if err := json.Unmarshal([]byte(poolJSON.String), &env.Pool); err != nil {
+				db.logger.Warn("failed to unmarshal pool_config", zap.Error(err), zap.String("environment_id", env.ID))
+			}
 		}
 
 		environments = append(environments, &env)

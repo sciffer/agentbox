@@ -89,10 +89,14 @@ func (db *DB) GetExecution(ctx context.Context, id string) (*models.Execution, e
 
 	// Deserialize JSON fields
 	if commandJSON.Valid {
-		json.Unmarshal([]byte(commandJSON.String), &exec.Command)
+		if err := json.Unmarshal([]byte(commandJSON.String), &exec.Command); err != nil {
+			db.logger.Warn("failed to unmarshal command", zap.Error(err), zap.String("execution_id", exec.ID))
+		}
 	}
 	if envVarsJSON.Valid {
-		json.Unmarshal([]byte(envVarsJSON.String), &exec.Env)
+		if err := json.Unmarshal([]byte(envVarsJSON.String), &exec.Env); err != nil {
+			db.logger.Warn("failed to unmarshal env_vars", zap.Error(err), zap.String("execution_id", exec.ID))
+		}
 	}
 
 	return &exec, nil
@@ -136,10 +140,14 @@ func (db *DB) ListExecutions(ctx context.Context, environmentID string, limit in
 
 		// Deserialize JSON fields
 		if commandJSON.Valid {
-			_ = json.Unmarshal([]byte(commandJSON.String), &exec.Command)
+			if err := json.Unmarshal([]byte(commandJSON.String), &exec.Command); err != nil {
+				db.logger.Warn("failed to unmarshal command", zap.Error(err), zap.String("execution_id", exec.ID))
+			}
 		}
 		if envVarsJSON.Valid {
-			_ = json.Unmarshal([]byte(envVarsJSON.String), &exec.Env)
+			if err := json.Unmarshal([]byte(envVarsJSON.String), &exec.Env); err != nil {
+				db.logger.Warn("failed to unmarshal env_vars", zap.Error(err), zap.String("execution_id", exec.ID))
+			}
 		}
 
 		executions = append(executions, &exec)
@@ -193,10 +201,14 @@ func (db *DB) LoadAllExecutions(ctx context.Context) ([]*models.Execution, error
 
 		// Deserialize JSON fields
 		if commandJSON.Valid {
-			_ = json.Unmarshal([]byte(commandJSON.String), &exec.Command)
+			if err := json.Unmarshal([]byte(commandJSON.String), &exec.Command); err != nil {
+				db.logger.Warn("failed to unmarshal command", zap.Error(err), zap.String("execution_id", exec.ID))
+			}
 		}
 		if envVarsJSON.Valid {
-			_ = json.Unmarshal([]byte(envVarsJSON.String), &exec.Env)
+			if err := json.Unmarshal([]byte(envVarsJSON.String), &exec.Env); err != nil {
+				db.logger.Warn("failed to unmarshal env_vars", zap.Error(err), zap.String("execution_id", exec.ID))
+			}
 		}
 
 		executions = append(executions, &exec)
