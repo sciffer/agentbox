@@ -56,10 +56,16 @@ export default function ExecutionPanel({ environmentId }: ExecutionPanelProps) {
   const [timeout, setTimeout] = useState('300')
 
   // Fetch executions list
-  const { data: executionsData, isLoading: listLoading, error: listError } = useQuery({
+  const { data: executionsData, isLoading: listLoading, error: listError, refetch } = useQuery({
     queryKey: ['executions', environmentId],
-    queryFn: () => executionsAPI.list(environmentId, { limit: 50 }),
-    refetchInterval: 5000, // Poll every 5 seconds for updates
+    queryFn: async () => {
+      console.log('Fetching executions for environment:', environmentId)
+      const result = await executionsAPI.list(environmentId, { limit: 50 })
+      console.log('Executions result:', result)
+      return result
+    },
+    refetchInterval: 3000, // Poll every 3 seconds for updates
+    staleTime: 1000, // Consider data stale after 1 second
   })
 
   // Fetch selected execution details
@@ -159,7 +165,10 @@ export default function ExecutionPanel({ environmentId }: ExecutionPanelProps) {
             <Tooltip title="Refresh">
               <IconButton 
                 size="small" 
-                onClick={() => queryClient.invalidateQueries({ queryKey: ['executions', environmentId] })}
+                onClick={() => {
+                  console.log('Manual refresh triggered for environment:', environmentId)
+                  refetch()
+                }}
               >
                 <RefreshIcon fontSize="small" />
               </IconButton>

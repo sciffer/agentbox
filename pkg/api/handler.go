@@ -541,3 +541,22 @@ func getUserIDFromContext(ctx context.Context) string {
 	}
 	return "anonymous"
 }
+
+// GetPoolStatus handles GET /pool/status
+// Returns the current standby pod pool status
+func (h *Handler) GetPoolStatus(w http.ResponseWriter, r *http.Request) {
+	status := h.orchestrator.GetPoolStatus()
+
+	resp := map[string]interface{}{
+		"pools": status,
+		"total": func() int {
+			total := 0
+			for _, count := range status {
+				total += count
+			}
+			return total
+		}(),
+	}
+
+	h.respondJSON(w, http.StatusOK, resp)
+}
