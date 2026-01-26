@@ -45,7 +45,7 @@ const statusConfig: Record<ExecutionStatus, { icon: React.ReactNode; color: 'def
   running: { icon: <CircularProgress size={16} />, color: 'primary' },
   completed: { icon: <SuccessIcon fontSize="small" />, color: 'success' },
   failed: { icon: <ErrorIcon fontSize="small" />, color: 'error' },
-  cancelled: { icon: <CancelIcon fontSize="small" />, color: 'warning' },
+  canceled: { icon: <CancelIcon fontSize="small" />, color: 'warning' },
 }
 
 export default function ExecutionPanel({ environmentId }: ExecutionPanelProps) {

@@ -916,13 +916,13 @@ func (o *Orchestrator) CancelExecution(ctx context.Context, execID string) error
 		exec.Status != models.ExecutionStatusQueued &&
 		exec.Status != models.ExecutionStatusRunning {
 		o.execMutex.Unlock()
-		return fmt.Errorf("execution cannot be cancelled (status: %s)", exec.Status)
+		return fmt.Errorf("execution cannot be canceled (status: %s)", exec.Status)
 	}
 
-	exec.Status = models.ExecutionStatusCancelled
+	exec.Status = models.ExecutionStatusCanceled
 	now := time.Now()
 	exec.CompletedAt = &now
-	exec.Error = "cancelled by user"
+	exec.Error = "canceled by user"
 	namespace := exec.Namespace
 	podName := exec.PodName
 	o.execMutex.Unlock()
@@ -930,14 +930,14 @@ func (o *Orchestrator) CancelExecution(ctx context.Context, execID string) error
 	// Try to delete the pod if it exists
 	if podName != "" && namespace != "" {
 		if err := o.k8sClient.DeletePod(ctx, namespace, podName, true); err != nil {
-			o.logger.Warn("failed to delete pod for cancelled execution",
+			o.logger.Warn("failed to delete pod for canceled execution",
 				zap.String("exec_id", execID),
 				zap.Error(err),
 			)
 		}
 	}
 
-	o.logger.Info("execution cancelled",
+	o.logger.Info("execution canceled",
 		zap.String("exec_id", execID),
 	)
 

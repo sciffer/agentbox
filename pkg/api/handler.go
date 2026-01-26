@@ -295,7 +295,7 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	if err := h.orchestrator.CancelExecution(ctx, execID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			h.respondError(w, http.StatusNotFound, "execution not found", err)
-		} else if strings.Contains(err.Error(), "cannot be cancelled") {
+		} else if strings.Contains(err.Error(), "cannot be canceled") {
 			h.respondError(w, http.StatusBadRequest, err.Error(), nil)
 		} else {
 			h.respondError(w, http.StatusInternalServerError, "failed to cancel execution", err)
@@ -303,7 +303,7 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.respondJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	h.respondJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
 }
 
 // DeleteEnvironment handles DELETE /environments/{id}

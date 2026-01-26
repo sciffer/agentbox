@@ -99,7 +99,7 @@ export interface LogEntry {
 }
 
 // Execution types for async isolated execution
-export type ExecutionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type ExecutionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'canceled'
 
 export interface Execution {
   id: string
