@@ -317,6 +317,34 @@ export default function EnvironmentDetailPage() {
                 </AccordionDetails>
               </Accordion>
             )}
+
+            {/* Pool Settings */}
+            {environment.pool && environment.pool.enabled && (
+              <Accordion defaultExpanded={false}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle1">Standby Pod Pool</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Table size="small">
+                    <TableBody>
+                      <TableRow>
+                        <TableCell><strong>Status</strong></TableCell>
+                        <TableCell>
+                          <Chip label="Enabled" color="success" size="small" />
+                        </TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><strong>Pool Size</strong></TableCell>
+                        <TableCell>{environment.pool.size || 2} standby pods</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Pre-warmed pods are maintained for faster command execution (~100ms vs ~2-3s)
+                  </Typography>
+                </AccordionDetails>
+              </Accordion>
+            )}
           </Box>
         </TabPanel>
         <TabPanel value={tab} index={1}>

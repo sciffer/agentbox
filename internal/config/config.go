@@ -15,6 +15,7 @@ type Config struct {
 	Auth       AuthConfig       `yaml:"auth"`
 	Resources  ResourceConfig   `yaml:"resources"`
 	Timeouts   TimeoutConfig    `yaml:"timeouts"`
+	Pool       PoolConfig       `yaml:"pool"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -29,6 +30,20 @@ type KubernetesConfig struct {
 	Kubeconfig      string `yaml:"kubeconfig"`
 	NamespacePrefix string `yaml:"namespace_prefix"`
 	RuntimeClass    string `yaml:"runtime_class"`
+}
+
+// PoolConfig holds standby pod pool configuration
+type PoolConfig struct {
+	// Enabled enables the standby pod pool for faster execution startup
+	Enabled bool `yaml:"enabled"`
+	// Size is the number of standby pods to maintain per image
+	Size int `yaml:"size"`
+	// DefaultImage is the default image for standby pods when no environment is specified
+	DefaultImage string `yaml:"default_image"`
+	// DefaultCPU is the CPU limit for standby pods
+	DefaultCPU string `yaml:"default_cpu"`
+	// DefaultMemory is the memory limit for standby pods
+	DefaultMemory string `yaml:"default_memory"`
 }
 
 // AuthConfig holds authentication configuration
@@ -101,6 +116,13 @@ func setDefaults(cfg *Config) {
 	cfg.Timeouts.DefaultTimeout = 3600
 	cfg.Timeouts.MaxTimeout = 86400
 	cfg.Timeouts.StartupTimeout = 120 // 2 minutes to allow for image pulls
+
+	// Pool defaults (disabled by default)
+	cfg.Pool.Enabled = false
+	cfg.Pool.Size = 2
+	cfg.Pool.DefaultImage = "python:3.11-slim"
+	cfg.Pool.DefaultCPU = "500m"
+	cfg.Pool.DefaultMemory = "512Mi"
 }
 
 // overrideFromEnv overrides config with environment variables
@@ -159,6 +181,24 @@ func overrideFromEnv(cfg *Config) {
 		if val, err := strconv.Atoi(v); err == nil {
 			cfg.Timeouts.StartupTimeout = val
 		}
+	}
+	// Pool settings
+	if v := os.Getenv("AGENTBOX_POOL_ENABLED"); v != "" {
+		cfg.Pool.Enabled = v == "true"
+	}
+	if v := os.Getenv("AGENTBOX_POOL_SIZE"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil && val >= 0 {
+			cfg.Pool.Size = val
+		}
+	}
+	if v := os.Getenv("AGENTBOX_POOL_DEFAULT_IMAGE"); v != "" {
+		cfg.Pool.DefaultImage = v
+	}
+	if v := os.Getenv("AGENTBOX_POOL_DEFAULT_CPU"); v != "" {
+		cfg.Pool.DefaultCPU = v
+	}
+	if v := os.Getenv("AGENTBOX_POOL_DEFAULT_MEMORY"); v != "" {
+		cfg.Pool.DefaultMemory = v
 	}
 }
 

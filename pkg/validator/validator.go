@@ -112,6 +112,38 @@ func (v *Validator) ValidateCreateRequest(req *models.CreateEnvironmentRequest) 
 		}
 	}
 
+	// Validate pool config
+	if req.Pool != nil {
+		if err := validatePoolConfig(req.Pool); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validatePoolConfig validates standby pod pool configuration
+func validatePoolConfig(pool *models.PoolConfig) error {
+	// Pool size must be positive if enabled
+	if pool.Enabled && pool.Size < 0 {
+		return fmt.Errorf("pool.size must be non-negative")
+	}
+
+	// Pool size has a reasonable upper limit
+	if pool.Size > 20 {
+		return fmt.Errorf("pool.size must be 20 or less")
+	}
+
+	// MinReady must be non-negative
+	if pool.MinReady < 0 {
+		return fmt.Errorf("pool.min_ready must be non-negative")
+	}
+
+	// MinReady cannot exceed pool size
+	if pool.MinReady > pool.Size && pool.Size > 0 {
+		return fmt.Errorf("pool.min_ready cannot exceed pool.size")
+	}
+
 	return nil
 }
 

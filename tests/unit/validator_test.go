@@ -972,3 +972,205 @@ func TestValidateIsolationConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestValidatePoolConfig(t *testing.T) {
+	v := validator.New(10000, 10*1024*1024*1024, 100*1024*1024*1024, 86400)
+
+	tests := []struct {
+		name        string
+		request     models.CreateEnvironmentRequest
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid pool config - enabled with size",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled: true,
+					Size:    3,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid pool config - disabled",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled: false,
+					Size:    0,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid pool config - with min_ready",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled:  true,
+					Size:     5,
+					MinReady: 2,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "nil pool config (valid)",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: nil,
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid pool size - negative",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled: true,
+					Size:    -1,
+				},
+			},
+			expectError: true,
+			errorMsg:    "pool.size must be non-negative",
+		},
+		{
+			name: "invalid pool size - exceeds maximum",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled: true,
+					Size:    25,
+				},
+			},
+			expectError: true,
+			errorMsg:    "pool.size must be 20 or less",
+		},
+		{
+			name: "invalid min_ready - negative",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled:  true,
+					Size:     5,
+					MinReady: -1,
+				},
+			},
+			expectError: true,
+			errorMsg:    "pool.min_ready must be non-negative",
+		},
+		{
+			name: "invalid min_ready - exceeds size",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled:  true,
+					Size:     3,
+					MinReady: 5,
+				},
+			},
+			expectError: true,
+			errorMsg:    "pool.min_ready cannot exceed pool.size",
+		},
+		{
+			name: "valid pool at max size",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled: true,
+					Size:    20,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid pool with min_ready equal to size",
+			request: models.CreateEnvironmentRequest{
+				Name:  "test-env",
+				Image: "python:3.11-slim",
+				Resources: models.ResourceSpec{
+					CPU:     "500m",
+					Memory:  "512Mi",
+					Storage: "1Gi",
+				},
+				Pool: &models.PoolConfig{
+					Enabled:  true,
+					Size:     3,
+					MinReady: 3,
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := v.ValidateCreateRequest(&tt.request)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

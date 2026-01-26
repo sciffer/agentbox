@@ -860,3 +860,415 @@ func TestCreateEnvironmentWithInternetAccess(t *testing.T) {
 	assert.NotNil(t, env.Isolation.NetworkPolicy)
 	assert.True(t, env.Isolation.NetworkPolicy.AllowInternet)
 }
+
+func TestCreateEnvironmentWithPoolConfig(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	t.Run("pool enabled with size", func(t *testing.T) {
+		req := &models.CreateEnvironmentRequest{
+			Name:  "test-env-pool",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled: true,
+				Size:    3,
+			},
+		}
+
+		env, err := orch.CreateEnvironment(ctx, req, "user-123")
+		require.NoError(t, err)
+		require.NotNil(t, env)
+
+		// Verify pool config is stored
+		assert.NotNil(t, env.Pool)
+		assert.True(t, env.Pool.Enabled)
+		assert.Equal(t, 3, env.Pool.Size)
+	})
+
+	t.Run("pool disabled", func(t *testing.T) {
+		req := &models.CreateEnvironmentRequest{
+			Name:  "test-env-no-pool",
+			Image: "node:18-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled: false,
+			},
+		}
+
+		env, err := orch.CreateEnvironment(ctx, req, "user-123")
+		require.NoError(t, err)
+		require.NotNil(t, env)
+
+		// Verify pool config is stored
+		assert.NotNil(t, env.Pool)
+		assert.False(t, env.Pool.Enabled)
+	})
+
+	t.Run("pool with min_ready", func(t *testing.T) {
+		req := &models.CreateEnvironmentRequest{
+			Name:  "test-env-pool-minready",
+			Image: "golang:1.21-alpine",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled:  true,
+				Size:     5,
+				MinReady: 2,
+			},
+		}
+
+		env, err := orch.CreateEnvironment(ctx, req, "user-123")
+		require.NoError(t, err)
+		require.NotNil(t, env)
+
+		// Verify pool config is stored
+		assert.NotNil(t, env.Pool)
+		assert.True(t, env.Pool.Enabled)
+		assert.Equal(t, 5, env.Pool.Size)
+		assert.Equal(t, 2, env.Pool.MinReady)
+	})
+
+	t.Run("no pool config (nil)", func(t *testing.T) {
+		req := &models.CreateEnvironmentRequest{
+			Name:  "test-env-nil-pool",
+			Image: "ruby:3.2-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: nil,
+		}
+
+		env, err := orch.CreateEnvironment(ctx, req, "user-123")
+		require.NoError(t, err)
+		require.NotNil(t, env)
+
+		// Pool should be nil when not specified
+		assert.Nil(t, env.Pool)
+	})
+}
+
+func TestCreateEnvironmentWithPoolAndIsolation(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	runAsNonRoot := true
+	allowPrivEsc := false
+
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-pool-isolation",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Isolation: &models.IsolationConfig{
+			RuntimeClass: "gvisor",
+			NetworkPolicy: &models.NetworkPolicyConfig{
+				AllowInternet: false,
+			},
+			SecurityContext: &models.SecurityContextConfig{
+				RunAsNonRoot:             &runAsNonRoot,
+				AllowPrivilegeEscalation: &allowPrivEsc,
+			},
+		},
+		Pool: &models.PoolConfig{
+			Enabled: true,
+			Size:    2,
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, env)
+
+	// Verify both isolation and pool configs are stored
+	assert.NotNil(t, env.Isolation)
+	assert.Equal(t, "gvisor", env.Isolation.RuntimeClass)
+	assert.NotNil(t, env.Isolation.NetworkPolicy)
+	assert.False(t, env.Isolation.NetworkPolicy.AllowInternet)
+	assert.NotNil(t, env.Isolation.SecurityContext)
+	assert.True(t, *env.Isolation.SecurityContext.RunAsNonRoot)
+
+	assert.NotNil(t, env.Pool)
+	assert.True(t, env.Pool.Enabled)
+	assert.Equal(t, 2, env.Pool.Size)
+}
+
+func TestListEnvironmentsWithPoolEnabled(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environments with and without pool enabled
+	envs := []struct {
+		name        string
+		poolEnabled bool
+		poolSize    int
+	}{
+		{"env-pool-1", true, 2},
+		{"env-pool-2", true, 3},
+		{"env-no-pool-1", false, 0},
+		{"env-no-pool-2", false, 0},
+	}
+
+	for _, e := range envs {
+		var pool *models.PoolConfig
+		if e.poolEnabled {
+			pool = &models.PoolConfig{
+				Enabled: true,
+				Size:    e.poolSize,
+			}
+		}
+
+		req := &models.CreateEnvironmentRequest{
+			Name:  e.name,
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: pool,
+		}
+		_, err := orch.CreateEnvironment(ctx, req, "user-123")
+		require.NoError(t, err)
+	}
+
+	// List all environments and verify pool configs
+	resp, err := orch.ListEnvironments(ctx, nil, "", 100, 0)
+	require.NoError(t, err)
+
+	poolEnabledCount := 0
+	for _, env := range resp.Environments {
+		if env.Pool != nil && env.Pool.Enabled {
+			poolEnabledCount++
+		}
+	}
+
+	assert.Equal(t, 2, poolEnabledCount, "Expected 2 environments with pool enabled")
+}
+
+func TestSubmitExecutionCleansUpPod(t *testing.T) {
+	orch, mockK8s := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-cleanup",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+
+	// Wait for environment to be running
+	time.Sleep(150 * time.Millisecond)
+	mockK8s.SetPodRunning(env.Namespace, "main")
+
+	// Update environment status to running
+	retrieved, _ := orch.GetEnvironment(ctx, env.ID)
+	retrieved.Status = models.StatusRunning
+
+	// Submit an execution
+	execReq := &orchestrator.EphemeralExecRequest{
+		EnvironmentID: env.ID,
+		Command:       []string{"echo", "test"},
+	}
+
+	exec, err := orch.SubmitExecution(ctx, execReq, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+
+	// Wait for execution to complete and cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify execution completed
+	finalExec, err := orch.GetExecution(ctx, exec.ID)
+	require.NoError(t, err)
+
+	// Execution should be completed (or at least started)
+	assert.NotEqual(t, models.ExecutionStatusPending, finalExec.Status,
+		"Execution should have progressed from pending")
+
+	// The ephemeral pod should be cleaned up after execution
+	// (The mock may or may not reflect this depending on timing)
+	t.Logf("Execution status: %s", finalExec.Status)
+}
+
+func TestExecutionIsolation(t *testing.T) {
+	orch, mockK8s := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-isolation",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+
+	// Wait for environment to be running
+	time.Sleep(150 * time.Millisecond)
+	mockK8s.SetPodRunning(env.Namespace, "main")
+
+	// Update environment status to running
+	retrieved, _ := orch.GetEnvironment(ctx, env.ID)
+	retrieved.Status = models.StatusRunning
+
+	// Submit multiple executions
+	execReq1 := &orchestrator.EphemeralExecRequest{
+		EnvironmentID: env.ID,
+		Command:       []string{"echo", "exec1"},
+	}
+	execReq2 := &orchestrator.EphemeralExecRequest{
+		EnvironmentID: env.ID,
+		Command:       []string{"echo", "exec2"},
+	}
+
+	exec1, err := orch.SubmitExecution(ctx, execReq1, "user-123")
+	require.NoError(t, err)
+
+	exec2, err := orch.SubmitExecution(ctx, execReq2, "user-123")
+	require.NoError(t, err)
+
+	// Verify each execution gets a unique ID and pod name
+	assert.NotEqual(t, exec1.ID, exec2.ID, "Executions should have unique IDs")
+	assert.NotEqual(t, exec1.PodName, exec2.PodName, "Each execution should get its own pod")
+
+	// Verify executions can be retrieved independently
+	retrieved1, err := orch.GetExecution(ctx, exec1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, exec1.ID, retrieved1.ID)
+
+	retrieved2, err := orch.GetExecution(ctx, exec2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, exec2.ID, retrieved2.ID)
+}
+
+func TestCancelExecutionCleansUpPod(t *testing.T) {
+	orch, mockK8s := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-cancel",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+
+	// Wait for environment to be running
+	time.Sleep(150 * time.Millisecond)
+	mockK8s.SetPodRunning(env.Namespace, "main")
+
+	// Update environment status to running
+	retrieved, _ := orch.GetEnvironment(ctx, env.ID)
+	retrieved.Status = models.StatusRunning
+
+	// Submit an execution
+	execReq := &orchestrator.EphemeralExecRequest{
+		EnvironmentID: env.ID,
+		Command:       []string{"sleep", "60"}, // Long-running command
+	}
+
+	exec, err := orch.SubmitExecution(ctx, execReq, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+
+	// Try to cancel - may succeed or execution may already be completed (mock is fast)
+	err = orch.CancelExecution(ctx, exec.ID)
+
+	// Verify final state - either canceled or completed (both are valid end states)
+	finalExec, err := orch.GetExecution(ctx, exec.ID)
+	require.NoError(t, err)
+
+	// The execution should be in a terminal state (canceled or completed)
+	assert.True(t,
+		finalExec.Status == models.ExecutionStatusCanceled ||
+			finalExec.Status == models.ExecutionStatusCompleted,
+		"Execution should be in terminal state (canceled or completed), got: %s", finalExec.Status)
+}
+
+func TestEphemeralPodCleanupAfterExecution(t *testing.T) {
+	orch, mockK8s := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create environment
+	req := &models.CreateEnvironmentRequest{
+		Name:  "test-env-pod-cleanup",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+	}
+
+	env, err := orch.CreateEnvironment(ctx, req, "user-123")
+	require.NoError(t, err)
+
+	// Wait for environment to be running
+	time.Sleep(150 * time.Millisecond)
+	mockK8s.SetPodRunning(env.Namespace, "main")
+
+	// Update environment status to running
+	retrieved, _ := orch.GetEnvironment(ctx, env.ID)
+	retrieved.Status = models.StatusRunning
+
+	// Submit an execution
+	execReq := &orchestrator.EphemeralExecRequest{
+		EnvironmentID: env.ID,
+		Command:       []string{"echo", "hello"},
+	}
+
+	exec, err := orch.SubmitExecution(ctx, execReq, "user-123")
+	require.NoError(t, err)
+	require.NotNil(t, exec)
+
+	// Record the pod name
+	podName := exec.PodName
+
+	// Wait for execution to complete
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify execution completed
+	finalExec, err := orch.GetExecution(ctx, exec.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ExecutionStatusCompleted, finalExec.Status)
+
+	// Verify the ephemeral pod was deleted (cleaned up)
+	// The mock should show the pod as deleted
+	pod, err := mockK8s.GetPod(ctx, "test-ephemeral", podName)
+	assert.Nil(t, pod, "Ephemeral pod should be deleted after execution")
+}

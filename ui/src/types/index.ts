@@ -38,6 +38,12 @@ export interface IsolationConfig {
   security_context?: SecurityContextConfig
 }
 
+export interface PoolConfig {
+  enabled?: boolean
+  size?: number
+  min_ready?: number
+}
+
 export interface Environment {
   id: string
   name: string
@@ -54,6 +60,7 @@ export interface Environment {
   node_selector?: Record<string, string>
   tolerations?: Toleration[]
   isolation?: IsolationConfig
+  pool?: PoolConfig
 }
 
 export interface EnvironmentPermission {
@@ -142,6 +149,7 @@ export interface CreateEnvironmentData {
   node_selector?: Record<string, string>
   tolerations?: Toleration[]
   isolation?: IsolationConfig
+  pool?: PoolConfig
 }
 
 export interface CreateUserData {
