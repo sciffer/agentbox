@@ -1207,7 +1207,7 @@ func TestCancelExecutionCleansUpPod(t *testing.T) {
 	require.NotNil(t, exec)
 
 	// Try to cancel - may succeed or execution may already be completed (mock is fast)
-	err = orch.CancelExecution(ctx, exec.ID)
+	_ = orch.CancelExecution(ctx, exec.ID) // Ignore error - execution may already be complete
 
 	// Verify final state - either canceled or completed (both are valid end states)
 	finalExec, err := orch.GetExecution(ctx, exec.ID)
@@ -1269,6 +1269,6 @@ func TestEphemeralPodCleanupAfterExecution(t *testing.T) {
 
 	// Verify the ephemeral pod was deleted (cleaned up)
 	// The mock should show the pod as deleted
-	pod, err := mockK8s.GetPod(ctx, "test-ephemeral", podName)
+	pod, _ := mockK8s.GetPod(ctx, "test-ephemeral", podName)
 	assert.Nil(t, pod, "Ephemeral pod should be deleted after execution")
 }

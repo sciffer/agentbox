@@ -1279,8 +1279,13 @@ func (o *Orchestrator) createStandbyPod(image string) error {
 
 	// Wait for pod to be running
 	if err := o.k8sClient.WaitForPodRunning(ctx, o.ephemeralNamespace, podName); err != nil {
-		// Cleanup failed pod
-		_ = o.k8sClient.DeletePod(ctx, o.ephemeralNamespace, podName, true)
+		// Cleanup failed pod (best effort, ignore cleanup errors)
+		if cleanupErr := o.k8sClient.DeletePod(ctx, o.ephemeralNamespace, podName, true); cleanupErr != nil {
+			o.logger.Warn("failed to cleanup failed standby pod",
+				zap.String("pod", podName),
+				zap.Error(cleanupErr),
+			)
+		}
 		return fmt.Errorf("standby pod failed to start: %w", err)
 	}
 

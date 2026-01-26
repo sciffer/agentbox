@@ -127,78 +127,107 @@ func setDefaults(cfg *Config) {
 
 // overrideFromEnv overrides config with environment variables
 func overrideFromEnv(cfg *Config) {
+	overrideServerFromEnv(&cfg.Server)
+	overrideKubernetesFromEnv(&cfg.Kubernetes)
+	overrideAuthFromEnv(&cfg.Auth)
+	overrideResourcesFromEnv(&cfg.Resources)
+	overrideTimeoutsFromEnv(&cfg.Timeouts)
+	overridePoolFromEnv(&cfg.Pool)
+}
+
+// overrideServerFromEnv overrides server config from environment variables
+func overrideServerFromEnv(cfg *ServerConfig) {
 	if v := os.Getenv("AGENTBOX_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
-			cfg.Server.Port = port
+			cfg.Port = port
 		}
 	}
 	if v := os.Getenv("AGENTBOX_HOST"); v != "" {
-		cfg.Server.Host = v
+		cfg.Host = v
 	}
 	if v := os.Getenv("AGENTBOX_LOG_LEVEL"); v != "" {
-		cfg.Server.LogLevel = v
+		cfg.LogLevel = v
 	}
+}
+
+// overrideKubernetesFromEnv overrides Kubernetes config from environment variables
+func overrideKubernetesFromEnv(cfg *KubernetesConfig) {
 	if v := os.Getenv("AGENTBOX_KUBECONFIG"); v != "" {
-		cfg.Kubernetes.Kubeconfig = v
+		cfg.Kubeconfig = v
 	}
 	if v := os.Getenv("AGENTBOX_NAMESPACE_PREFIX"); v != "" {
-		cfg.Kubernetes.NamespacePrefix = v
+		cfg.NamespacePrefix = v
 	}
 	if v := os.Getenv("AGENTBOX_RUNTIME_CLASS"); v != "" {
-		cfg.Kubernetes.RuntimeClass = v
+		cfg.RuntimeClass = v
 	}
+}
+
+// overrideAuthFromEnv overrides auth config from environment variables
+func overrideAuthFromEnv(cfg *AuthConfig) {
 	if v := os.Getenv("AGENTBOX_AUTH_ENABLED"); v != "" {
-		cfg.Auth.Enabled = v == "true"
+		cfg.Enabled = v == "true"
 	}
 	if v := os.Getenv("AGENTBOX_AUTH_SECRET"); v != "" {
-		cfg.Auth.Secret = v
+		cfg.Secret = v
 	}
+}
+
+// overrideResourcesFromEnv overrides resources config from environment variables
+func overrideResourcesFromEnv(cfg *ResourceConfig) {
 	if v := os.Getenv("AGENTBOX_DEFAULT_CPU_LIMIT"); v != "" {
-		cfg.Resources.DefaultCPULimit = v
+		cfg.DefaultCPULimit = v
 	}
 	if v := os.Getenv("AGENTBOX_DEFAULT_MEMORY_LIMIT"); v != "" {
-		cfg.Resources.DefaultMemoryLimit = v
+		cfg.DefaultMemoryLimit = v
 	}
 	if v := os.Getenv("AGENTBOX_DEFAULT_STORAGE_LIMIT"); v != "" {
-		cfg.Resources.DefaultStorageLimit = v
+		cfg.DefaultStorageLimit = v
 	}
 	if v := os.Getenv("AGENTBOX_MAX_ENVIRONMENTS_PER_USER"); v != "" {
 		if val, err := strconv.Atoi(v); err == nil {
-			cfg.Resources.MaxEnvironmentsPerUser = val
+			cfg.MaxEnvironmentsPerUser = val
 		}
 	}
+}
+
+// overrideTimeoutsFromEnv overrides timeouts config from environment variables
+func overrideTimeoutsFromEnv(cfg *TimeoutConfig) {
 	if v := os.Getenv("AGENTBOX_DEFAULT_TIMEOUT"); v != "" {
 		if val, err := strconv.Atoi(v); err == nil {
-			cfg.Timeouts.DefaultTimeout = val
+			cfg.DefaultTimeout = val
 		}
 	}
 	if v := os.Getenv("AGENTBOX_MAX_TIMEOUT"); v != "" {
 		if val, err := strconv.Atoi(v); err == nil {
-			cfg.Timeouts.MaxTimeout = val
+			cfg.MaxTimeout = val
 		}
 	}
 	if v := os.Getenv("AGENTBOX_STARTUP_TIMEOUT"); v != "" {
 		if val, err := strconv.Atoi(v); err == nil {
-			cfg.Timeouts.StartupTimeout = val
+			cfg.StartupTimeout = val
 		}
 	}
-	// Pool settings
+}
+
+// overridePoolFromEnv overrides pool config from environment variables
+func overridePoolFromEnv(cfg *PoolConfig) {
 	if v := os.Getenv("AGENTBOX_POOL_ENABLED"); v != "" {
-		cfg.Pool.Enabled = v == "true"
+		cfg.Enabled = v == "true"
 	}
 	if v := os.Getenv("AGENTBOX_POOL_SIZE"); v != "" {
 		if val, err := strconv.Atoi(v); err == nil && val >= 0 {
-			cfg.Pool.Size = val
+			cfg.Size = val
 		}
 	}
 	if v := os.Getenv("AGENTBOX_POOL_DEFAULT_IMAGE"); v != "" {
-		cfg.Pool.DefaultImage = v
+		cfg.DefaultImage = v
 	}
 	if v := os.Getenv("AGENTBOX_POOL_DEFAULT_CPU"); v != "" {
-		cfg.Pool.DefaultCPU = v
+		cfg.DefaultCPU = v
 	}
 	if v := os.Getenv("AGENTBOX_POOL_DEFAULT_MEMORY"); v != "" {
-		cfg.Pool.DefaultMemory = v
+		cfg.DefaultMemory = v
 	}
 }
 
