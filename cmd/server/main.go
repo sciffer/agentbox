@@ -108,7 +108,7 @@ func run() error {
 	)
 
 	// Initialize orchestrator
-	orch := orchestrator.New(k8sClient, cfg, log)
+	orch := orchestrator.New(k8sClient, cfg, log, db)
 
 	// Initialize WebSocket proxy
 	var k8sInterface k8s.ClientInterface = k8sClient

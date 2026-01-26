@@ -43,7 +43,7 @@ func setupAPITestWithMock(t *testing.T) (*api.Handler, *mocks.MockK8sClient, *mu
 	require.NoError(t, err)
 
 	mockK8s := mocks.NewMockK8sClient()
-	orch := orchestrator.New(mockK8s, cfg, log)
+	orch := orchestrator.New(mockK8s, cfg, log, nil)
 
 	val := validator.New(10000, 10*1024*1024*1024, 100*1024*1024*1024, 86400)
 

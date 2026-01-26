@@ -138,6 +138,7 @@ func getMigrations() map[int]string {
 	return map[int]string{
 		1: initialSchema,
 		2: apiKeyPermissionsSchema,
+		3: environmentsAndExecutionsSchema,
 	}
 }
 
@@ -225,4 +226,64 @@ CREATE INDEX IF NOT EXISTS idx_metrics_env_id ON metrics(environment_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_type ON metrics(metric_type);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);
 CREATE INDEX IF NOT EXISTS idx_metrics_env_type_time ON metrics(environment_id, metric_type, timestamp);
+`
+
+// environmentsAndExecutionsSchema adds tables for environments and executions
+const environmentsAndExecutionsSchema = `
+-- Environments table
+CREATE TABLE IF NOT EXISTS environments (
+    id TEXT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    image TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    user_id TEXT,
+    namespace TEXT NOT NULL,
+    endpoint TEXT,
+    timeout INTEGER,
+    -- Resources (stored as JSON)
+    resources_cpu TEXT NOT NULL,
+    resources_memory TEXT NOT NULL,
+    resources_storage TEXT NOT NULL,
+    -- Optional fields (stored as JSON)
+    env_vars TEXT,
+    command TEXT,
+    labels TEXT,
+    node_selector TEXT,
+    tolerations TEXT,
+    isolation_config TEXT,
+    pool_config TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_environments_user_id ON environments(user_id);
+CREATE INDEX IF NOT EXISTS idx_environments_status ON environments(status);
+CREATE INDEX IF NOT EXISTS idx_environments_namespace ON environments(namespace);
+
+-- Executions table
+CREATE TABLE IF NOT EXISTS executions (
+    id TEXT PRIMARY KEY,
+    environment_id TEXT NOT NULL,
+    user_id TEXT,
+    command TEXT NOT NULL,
+    env_vars TEXT,
+    status VARCHAR(50) NOT NULL,
+    pod_name TEXT,
+    namespace TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    queued_at TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    exit_code INTEGER,
+    stdout TEXT,
+    stderr TEXT,
+    error TEXT,
+    duration_ms BIGINT,
+    FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_executions_env_id ON executions(environment_id);
+CREATE INDEX IF NOT EXISTS idx_executions_user_id ON executions(user_id);
+CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
+CREATE INDEX IF NOT EXISTS idx_executions_created_at ON executions(created_at);
 `
