@@ -44,7 +44,7 @@ import { environmentsAPI } from '../services/api'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Environment, CreateEnvironmentData, Toleration, IsolationConfig } from '../types'
+import { Environment, CreateEnvironmentData, Toleration, IsolationConfig, PoolConfig } from '../types'
 
 // Interface for toleration form entry
 interface TolerationEntry {
@@ -74,6 +74,9 @@ const createEnvSchema = z.object({
   runAsNonRoot: z.boolean().optional(),
   readOnlyRootFilesystem: z.boolean().optional(),
   allowPrivilegeEscalation: z.boolean().optional(),
+  // Pool settings
+  poolEnabled: z.boolean().optional(),
+  poolSize: z.number().optional(),
 })
 
 type CreateEnvFormData = z.infer<typeof createEnvSchema>
@@ -164,6 +167,8 @@ export default function EnvironmentsPage() {
       runAsNonRoot: false,
       readOnlyRootFilesystem: false,
       allowPrivilegeEscalation: false,
+      poolEnabled: false,
+      poolSize: 2,
     },
   })
 
@@ -219,6 +224,15 @@ export default function EnvironmentsPage() {
         }))
       : undefined
 
+    // Build pool config if enabled
+    let pool: PoolConfig | undefined = undefined
+    if (formData.poolEnabled) {
+      pool = {
+        enabled: true,
+        size: formData.poolSize || 2,
+      }
+    }
+
     createMutation.mutate({
       name: formData.name,
       image: formData.image,
@@ -231,6 +245,7 @@ export default function EnvironmentsPage() {
       node_selector: parseNodeSelector(formData.nodeSelector),
       tolerations: tolerationsData,
       isolation,
+      pool,
     })
   }
 
@@ -669,6 +684,53 @@ export default function EnvironmentsPage() {
                     Allow processes to gain more privileges (not recommended)
                   </Typography>
                 </Box>
+              </AccordionDetails>
+            </Accordion>
+
+            {/* Standby Pod Pool */}
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>Standby Pod Pool</Typography>
+                <Tooltip title="Pre-warm pods for faster command execution">
+                  <InfoIcon fontSize="small" sx={{ ml: 1, color: 'text.secondary' }} />
+                </Tooltip>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Standby pods are pre-warmed and ready to execute commands immediately, reducing startup latency from ~2-3 seconds to ~100ms.
+                </Alert>
+                <Box>
+                  <Controller
+                    name="poolEnabled"
+                    control={control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={<Switch checked={field.value} onChange={field.onChange} />}
+                        label="Enable Standby Pool"
+                      />
+                    )}
+                  />
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ ml: 4 }}>
+                    Maintain pre-warmed pods using this environment's image
+                  </Typography>
+                </Box>
+                <Controller
+                  name="poolSize"
+                  control={control}
+                  render={({ field }) => (
+                    <TextField
+                      margin="dense"
+                      label="Pool Size"
+                      fullWidth
+                      type="number"
+                      value={field.value}
+                      onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 2)}
+                      helperText="Number of standby pods to maintain (default: 2)"
+                      sx={{ mt: 2 }}
+                      inputProps={{ min: 1, max: 10 }}
+                    />
+                  )}
+                />
               </AccordionDetails>
             </Accordion>
 

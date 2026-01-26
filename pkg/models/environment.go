@@ -59,6 +59,16 @@ type IsolationConfig struct {
 	SecurityContext *SecurityContextConfig `json:"security_context,omitempty"`
 }
 
+// PoolConfig defines standby pod pool settings for an environment
+type PoolConfig struct {
+	// Enabled indicates whether standby pods should be maintained for this environment
+	Enabled bool `json:"enabled,omitempty"`
+	// Size is the number of standby pods to maintain (default: 2)
+	Size int `json:"size,omitempty"`
+	// MinReady is the minimum number of pods that should be ready before accepting executions
+	MinReady int `json:"min_ready,omitempty"`
+}
+
 // Environment represents an isolated execution environment
 type Environment struct {
 	ID           string            `json:"id"`
@@ -79,6 +89,7 @@ type Environment struct {
 	NodeSelector map[string]string `json:"node_selector,omitempty"`
 	Tolerations  []Toleration      `json:"tolerations,omitempty"`
 	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
+	Pool         *PoolConfig       `json:"pool,omitempty"`
 }
 
 // ResourceSpec defines resource limits and requests
@@ -106,6 +117,7 @@ type CreateEnvironmentRequest struct {
 	NodeSelector map[string]string `json:"node_selector,omitempty"`
 	Tolerations  []Toleration      `json:"tolerations,omitempty"`
 	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
+	Pool         *PoolConfig       `json:"pool,omitempty"`
 }
 
 // ExecRequest is the request body for executing a command in an existing environment

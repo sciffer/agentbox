@@ -22,3 +22,12 @@ timeouts:
   default_timeout: 3600
   max_timeout: 86400
   startup_timeout: 60
+
+# Standby pod pool configuration
+# Pre-warms pods for faster command execution startup
+pool:
+  enabled: false           # Set to true to enable standby pods
+  size: 2                  # Number of standby pods to maintain per image
+  default_image: "python:3.11-slim"
+  default_cpu: "500m"
+  default_memory: "512Mi"

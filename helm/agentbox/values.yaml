@@ -61,6 +61,14 @@ api:
     AGENTBOX_MAX_TIMEOUT: "86400"
     AGENTBOX_STARTUP_TIMEOUT: "300"
     
+    # Standby pod pool configuration
+    # When enabled, pre-warms pods for faster command execution
+    AGENTBOX_POOL_ENABLED: "false"
+    AGENTBOX_POOL_SIZE: "2"                    # Number of standby pods per image
+    AGENTBOX_POOL_DEFAULT_IMAGE: "python:3.11-slim"
+    AGENTBOX_POOL_DEFAULT_CPU: "500m"
+    AGENTBOX_POOL_DEFAULT_MEMORY: "512Mi"
+    
     # Metrics configuration
     AGENTBOX_METRICS_ENABLED: "true"
     AGENTBOX_METRICS_COLLECTION_INTERVAL: "30s"

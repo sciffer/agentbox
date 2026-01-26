@@ -487,3 +487,235 @@ func TestGetLogsAPI(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, rr.Code)
 	})
 }
+
+func TestCreateEnvironmentWithPoolAPI(t *testing.T) {
+	_, router := setupAPITest(t)
+
+	t.Run("create with pool enabled", func(t *testing.T) {
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "test-env-pool",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled: true,
+				Size:    3,
+			},
+		}
+
+		body, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusCreated, rr.Code)
+
+		var env models.Environment
+		err = json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+
+		assert.NotEmpty(t, env.ID)
+		assert.NotNil(t, env.Pool)
+		assert.True(t, env.Pool.Enabled)
+		assert.Equal(t, 3, env.Pool.Size)
+	})
+
+	t.Run("create with pool disabled", func(t *testing.T) {
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "test-env-no-pool",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled: false,
+			},
+		}
+
+		body, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusCreated, rr.Code)
+
+		var env models.Environment
+		err = json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+
+		assert.NotEmpty(t, env.ID)
+		assert.NotNil(t, env.Pool)
+		assert.False(t, env.Pool.Enabled)
+	})
+
+	t.Run("create with pool and min_ready", func(t *testing.T) {
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "test-env-pool-minready",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled:  true,
+				Size:     5,
+				MinReady: 2,
+			},
+		}
+
+		body, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusCreated, rr.Code)
+
+		var env models.Environment
+		err = json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+
+		assert.NotEmpty(t, env.ID)
+		assert.NotNil(t, env.Pool)
+		assert.True(t, env.Pool.Enabled)
+		assert.Equal(t, 5, env.Pool.Size)
+		assert.Equal(t, 2, env.Pool.MinReady)
+	})
+
+	t.Run("create with invalid pool size - negative", func(t *testing.T) {
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "test-env-bad-pool",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled: true,
+				Size:    -5,
+			},
+		}
+
+		body, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("create with invalid pool size - exceeds max", func(t *testing.T) {
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "test-env-bad-pool-size",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled: true,
+				Size:    100,
+			},
+		}
+
+		body, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("create with invalid min_ready exceeds size", func(t *testing.T) {
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "test-env-bad-minready",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+			Pool: &models.PoolConfig{
+				Enabled:  true,
+				Size:     3,
+				MinReady: 10,
+			},
+		}
+
+		body, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+}
+
+func TestGetEnvironmentWithPoolAPI(t *testing.T) {
+	_, router := setupAPITest(t)
+
+	// Create environment with pool settings
+	createReq := models.CreateEnvironmentRequest{
+		Name:  "test-env-pool-get",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Pool: &models.PoolConfig{
+			Enabled: true,
+			Size:    4,
+		},
+	}
+
+	body, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	var createdEnv models.Environment
+	_ = json.NewDecoder(rr.Body).Decode(&createdEnv)
+
+	t.Run("get environment preserves pool config", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+createdEnv.ID, nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+
+		var env models.Environment
+		err := json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+
+		assert.NotNil(t, env.Pool)
+		assert.True(t, env.Pool.Enabled)
+		assert.Equal(t, 4, env.Pool.Size)
+	})
+}

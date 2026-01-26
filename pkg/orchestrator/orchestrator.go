@@ -19,6 +19,14 @@ import (
 	"github.com/sciffer/agentbox/pkg/models"
 )
 
+// StandbyPod represents a pre-warmed pod ready to accept commands
+type StandbyPod struct {
+	Name      string
+	Namespace string
+	Image     string
+	CreatedAt time.Time
+}
+
 // Orchestrator manages environment lifecycle
 type Orchestrator struct {
 	k8sClient       k8s.ClientInterface
@@ -33,6 +41,17 @@ type Orchestrator struct {
 	// executions tracks async command executions
 	executions map[string]*models.Execution
 	execMutex  sync.RWMutex
+	// ephemeralNamespace is a shared namespace for all ephemeral executions
+	// This avoids quota conflicts with environment namespaces
+	ephemeralNamespace string
+	ephemeralNsReady   bool
+	ephemeralNsMutex   sync.Mutex
+	// standbyPool holds pre-warmed pods ready for immediate use
+	// Key is the image name, value is a slice of available standby pods
+	standbyPool      map[string][]*StandbyPod
+	standbyPoolMutex sync.Mutex
+	// poolStopChan signals the pool replenishment goroutine to stop
+	poolStopChan chan struct{}
 }
 
 // MaxConcurrentProvisions is the maximum number of environments that can be
@@ -41,15 +60,31 @@ const MaxConcurrentProvisions = 10
 
 // New creates a new orchestrator instance
 func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) *Orchestrator {
-	return &Orchestrator{
-		k8sClient:       k8sClient,
-		config:          cfg,
-		logger:          log,
-		environments:    make(map[string]*models.Environment),
-		namespacePrefix: cfg.Kubernetes.NamespacePrefix,
-		provisionSem:    make(chan struct{}, MaxConcurrentProvisions),
-		executions:      make(map[string]*models.Execution),
+	o := &Orchestrator{
+		k8sClient:          k8sClient,
+		config:             cfg,
+		logger:             log,
+		environments:       make(map[string]*models.Environment),
+		namespacePrefix:    cfg.Kubernetes.NamespacePrefix,
+		provisionSem:       make(chan struct{}, MaxConcurrentProvisions),
+		executions:         make(map[string]*models.Execution),
+		ephemeralNamespace: cfg.Kubernetes.NamespacePrefix + "ephemeral",
+		ephemeralNsReady:   false,
+		standbyPool:        make(map[string][]*StandbyPod),
+		poolStopChan:       make(chan struct{}),
 	}
+
+	// Start pool replenishment if enabled
+	if cfg.Pool.Enabled && cfg.Pool.Size > 0 {
+		go o.runPoolReplenishment()
+	}
+
+	return o
+}
+
+// Stop gracefully shuts down the orchestrator
+func (o *Orchestrator) Stop() {
+	close(o.poolStopChan)
 }
 
 // CreateEnvironment creates a new isolated environment
@@ -73,6 +108,7 @@ func (o *Orchestrator) CreateEnvironment(ctx context.Context, req *models.Create
 		NodeSelector: req.NodeSelector,
 		Tolerations:  req.Tolerations,
 		Isolation:    req.Isolation,
+		Pool:         req.Pool,
 		Endpoint:     fmt.Sprintf("ws://localhost:8080/api/v1/environments/%s/attach", envID),
 	}
 
@@ -620,6 +656,60 @@ type EphemeralExecRequest struct {
 	Env           map[string]string `json:"env,omitempty"` // Additional env vars (merged with environment's)
 }
 
+// ensureEphemeralNamespace creates the shared ephemeral namespace if it doesn't exist
+// This namespace is used for all ephemeral executions and has a larger quota
+func (o *Orchestrator) ensureEphemeralNamespace(ctx context.Context) error {
+	o.ephemeralNsMutex.Lock()
+	defer o.ephemeralNsMutex.Unlock()
+
+	if o.ephemeralNsReady {
+		return nil
+	}
+
+	labels := map[string]string{
+		"app":        "agentbox",
+		"managed-by": "agentbox",
+		"type":       "ephemeral",
+	}
+
+	// Create namespace (idempotent - ignores "already exists" error)
+	if err := o.k8sClient.CreateNamespace(ctx, o.ephemeralNamespace, labels); err != nil {
+		// Check if namespace already exists
+		exists, checkErr := o.k8sClient.NamespaceExists(ctx, o.ephemeralNamespace)
+		if checkErr != nil || !exists {
+			return fmt.Errorf("failed to create ephemeral namespace: %w", err)
+		}
+	}
+
+	// Create a larger resource quota for concurrent executions
+	// Allow up to 10 concurrent executions with 1 CPU and 1Gi memory each
+	if err := o.k8sClient.CreateResourceQuota(
+		ctx,
+		o.ephemeralNamespace,
+		"10",   // 10 CPUs total
+		"10Gi", // 10Gi memory total
+		"20Gi", // 20Gi storage total
+	); err != nil {
+		o.logger.Warn("failed to create resource quota for ephemeral namespace (may already exist)",
+			zap.Error(err),
+		)
+	}
+
+	// Apply default network policy (restrictive - no internet by default)
+	if err := o.k8sClient.CreateNetworkPolicy(ctx, o.ephemeralNamespace); err != nil {
+		o.logger.Warn("failed to apply network policy to ephemeral namespace (may already exist)",
+			zap.Error(err),
+		)
+	}
+
+	o.ephemeralNsReady = true
+	o.logger.Info("ephemeral namespace ready",
+		zap.String("namespace", o.ephemeralNamespace),
+	)
+
+	return nil
+}
+
 // SubmitExecution queues an async execution and returns immediately with the execution ID
 // The execution runs in a goroutine and can be polled for status via GetExecution
 func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRequest, userID string) (*models.Execution, error) {
@@ -632,6 +722,11 @@ func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRe
 	// Verify environment is running
 	if env.Status != models.StatusRunning {
 		return nil, fmt.Errorf("environment is not running (status: %s)", env.Status)
+	}
+
+	// Ensure the shared ephemeral namespace exists
+	if err := o.ensureEphemeralNamespace(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize ephemeral namespace: %w", err)
 	}
 
 	// Generate unique execution ID
@@ -647,7 +742,7 @@ func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRe
 		Status:        models.ExecutionStatusPending,
 		UserID:        userID,
 		PodName:       podName,
-		Namespace:     env.Namespace,
+		Namespace:     o.ephemeralNamespace, // Use shared ephemeral namespace
 		CreatedAt:     now,
 	}
 
@@ -697,6 +792,9 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		return
 	}
 
+	// Try to use a standby pod for faster execution
+	standbyPod := o.claimStandbyPod(env.Image)
+
 	// Update status to running
 	now := time.Now()
 	o.execMutex.Lock()
@@ -704,17 +802,29 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		exec.Status = models.ExecutionStatusRunning
 		exec.StartedAt = &now
 		exec.QueuedAt = &now
+		// Update pod name if using standby
+		if standbyPod != nil {
+			exec.PodName = standbyPod.Name
+		}
 	}
 	o.execMutex.Unlock()
 
-	// Get execution record for pod name
+	// Get execution record
 	o.execMutex.RLock()
 	exec := o.executions[execID]
-	podName := exec.PodName
 	namespace := exec.Namespace
 	o.execMutex.RUnlock()
 
-	o.logger.Info("starting execution",
+	// If we got a standby pod, use it with exec
+	if standbyPod != nil {
+		o.runWithStandbyPod(ctx, execID, standbyPod, req.Command, env)
+		return
+	}
+
+	// No standby pod available, create a new one
+	podName := exec.PodName
+
+	o.logger.Info("starting execution (new pod)",
 		zap.String("exec_id", execID),
 		zap.String("pod", podName),
 		zap.String("namespace", namespace),
@@ -841,6 +951,72 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		zap.String("exec_id", execID),
 		zap.String("pod", podName),
 		zap.Int("exit_code", result.ExitCode),
+		zap.Int64("duration_ms", durationMs),
+	)
+}
+
+// runWithStandbyPod executes a command using a pre-warmed standby pod
+func (o *Orchestrator) runWithStandbyPod(ctx context.Context, execID string, standbyPod *StandbyPod, command []string, env *models.Environment) {
+	o.logger.Info("starting execution (standby pod)",
+		zap.String("exec_id", execID),
+		zap.String("pod", standbyPod.Name),
+		zap.String("image", standbyPod.Image),
+	)
+
+	// Ensure pod cleanup after execution (standby pods are single-use)
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := o.k8sClient.DeletePod(cleanupCtx, standbyPod.Namespace, standbyPod.Name, true); err != nil {
+			o.logger.Warn("failed to cleanup standby pod",
+				zap.String("exec_id", execID),
+				zap.String("pod", standbyPod.Name),
+				zap.Error(err),
+			)
+		} else {
+			o.logger.Debug("cleaned up standby pod",
+				zap.String("exec_id", execID),
+				zap.String("pod", standbyPod.Name),
+			)
+		}
+	}()
+
+	// Execute command in the standby pod
+	startTime := time.Now()
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	err := o.k8sClient.ExecInPod(ctx, standbyPod.Namespace, standbyPod.Name, command, nil, &stdoutBuf, &stderrBuf)
+	duration := time.Since(startTime)
+
+	// Determine exit code (0 if no error, 1 otherwise)
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+	}
+
+	// Update execution with results
+	completedAt := time.Now()
+	durationMs := duration.Milliseconds()
+	o.execMutex.Lock()
+	if e, exists := o.executions[execID]; exists {
+		if err != nil {
+			e.Status = models.ExecutionStatusFailed
+			e.Error = err.Error()
+		} else {
+			e.Status = models.ExecutionStatusCompleted
+		}
+		e.CompletedAt = &completedAt
+		e.ExitCode = &exitCode
+		e.Stdout = stdoutBuf.String()
+		e.Stderr = stderrBuf.String()
+		e.DurationMs = &durationMs
+	}
+	o.execMutex.Unlock()
+
+	o.logger.Info("execution completed (standby pod)",
+		zap.String("exec_id", execID),
+		zap.String("pod", standbyPod.Name),
+		zap.Int("exit_code", exitCode),
 		zap.Int64("duration_ms", durationMs),
 	)
 }
@@ -975,4 +1151,230 @@ func (o *Orchestrator) updateExecutionError(execID string, errMsg string) {
 		exec.CompletedAt = &now
 		exec.Error = errMsg
 	}
+}
+
+// ========== Standby Pod Pool Management ==========
+
+// runPoolReplenishment runs in the background to maintain the standby pod pool
+func (o *Orchestrator) runPoolReplenishment() {
+	o.logger.Info("starting standby pod pool replenishment",
+		zap.Int("target_size", o.config.Pool.Size),
+		zap.String("default_image", o.config.Pool.DefaultImage),
+	)
+
+	// Initial pool creation
+	o.replenishPool()
+
+	// Periodic check to maintain pool size
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-o.poolStopChan:
+			o.logger.Info("stopping standby pod pool replenishment")
+			o.cleanupPool()
+			return
+		case <-ticker.C:
+			o.replenishPool()
+		}
+	}
+}
+
+// replenishPool ensures the standby pool has the target number of pods
+func (o *Orchestrator) replenishPool() {
+	// Ensure ephemeral namespace exists
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := o.ensureEphemeralNamespace(ctx); err != nil {
+		o.logger.Error("failed to ensure ephemeral namespace for pool", zap.Error(err))
+		return
+	}
+
+	// Collect all images that need standby pods
+	// Map of image -> target pool size
+	imageTargets := make(map[string]int)
+
+	// Add global default pool if enabled
+	if o.config.Pool.Enabled && o.config.Pool.Size > 0 {
+		imageTargets[o.config.Pool.DefaultImage] = o.config.Pool.Size
+	}
+
+	// Add per-environment pools
+	o.envMutex.RLock()
+	for _, env := range o.environments {
+		if env.Pool != nil && env.Pool.Enabled && env.Status == models.StatusRunning {
+			poolSize := env.Pool.Size
+			if poolSize <= 0 {
+				poolSize = 2 // Default pool size
+			}
+			// Use the larger value if same image has multiple configs
+			if current, exists := imageTargets[env.Image]; !exists || poolSize > current {
+				imageTargets[env.Image] = poolSize
+			}
+		}
+	}
+	o.envMutex.RUnlock()
+
+	// Replenish pools for each image
+	for image, targetSize := range imageTargets {
+		o.standbyPoolMutex.Lock()
+		currentSize := len(o.standbyPool[image])
+		needed := targetSize - currentSize
+		o.standbyPoolMutex.Unlock()
+
+		if needed <= 0 {
+			continue
+		}
+
+		o.logger.Debug("replenishing standby pool",
+			zap.String("image", image),
+			zap.Int("current", currentSize),
+			zap.Int("target", targetSize),
+			zap.Int("creating", needed),
+		)
+
+		for i := 0; i < needed; i++ {
+			if err := o.createStandbyPod(image); err != nil {
+				o.logger.Warn("failed to create standby pod",
+					zap.String("image", image),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+}
+
+// createStandbyPod creates a new standby pod for the pool
+func (o *Orchestrator) createStandbyPod(image string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	podID := uuid.New().String()[:8]
+	podName := "standby-" + podID
+
+	labels := map[string]string{
+		"app":        "agentbox",
+		"managed-by": "agentbox",
+		"type":       "standby",
+		"image-hash": hashImage(image),
+	}
+
+	// Create pod with sleep command (idle, waiting for exec)
+	podSpec := &k8s.PodSpec{
+		Name:         podName,
+		Namespace:    o.ephemeralNamespace,
+		Image:        image,
+		Command:      []string{"/bin/sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+		CPU:          o.config.Pool.DefaultCPU,
+		Memory:       o.config.Pool.DefaultMemory,
+		RuntimeClass: o.config.Kubernetes.RuntimeClass,
+		Labels:       labels,
+	}
+
+	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
+		return fmt.Errorf("failed to create standby pod: %w", err)
+	}
+
+	// Wait for pod to be running
+	if err := o.k8sClient.WaitForPodRunning(ctx, o.ephemeralNamespace, podName); err != nil {
+		// Cleanup failed pod (best effort, ignore cleanup errors)
+		if cleanupErr := o.k8sClient.DeletePod(ctx, o.ephemeralNamespace, podName, true); cleanupErr != nil {
+			o.logger.Warn("failed to cleanup failed standby pod",
+				zap.String("pod", podName),
+				zap.Error(cleanupErr),
+			)
+		}
+		return fmt.Errorf("standby pod failed to start: %w", err)
+	}
+
+	// Add to pool
+	standbyPod := &StandbyPod{
+		Name:      podName,
+		Namespace: o.ephemeralNamespace,
+		Image:     image,
+		CreatedAt: time.Now(),
+	}
+
+	o.standbyPoolMutex.Lock()
+	o.standbyPool[image] = append(o.standbyPool[image], standbyPod)
+	o.standbyPoolMutex.Unlock()
+
+	o.logger.Debug("created standby pod",
+		zap.String("pod", podName),
+		zap.String("image", image),
+	)
+
+	return nil
+}
+
+// claimStandbyPod attempts to claim a standby pod from the pool
+// Returns nil if no matching pod is available
+func (o *Orchestrator) claimStandbyPod(image string) *StandbyPod {
+	o.standbyPoolMutex.Lock()
+	defer o.standbyPoolMutex.Unlock()
+
+	pods := o.standbyPool[image]
+	if len(pods) == 0 {
+		return nil
+	}
+
+	// Take the first available pod (FIFO)
+	pod := pods[0]
+	o.standbyPool[image] = pods[1:]
+
+	o.logger.Debug("claimed standby pod",
+		zap.String("pod", pod.Name),
+		zap.String("image", image),
+		zap.Int("remaining", len(o.standbyPool[image])),
+	)
+
+	return pod
+}
+
+// cleanupPool removes all standby pods (called on shutdown)
+func (o *Orchestrator) cleanupPool() {
+	o.standbyPoolMutex.Lock()
+	defer o.standbyPoolMutex.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for image, pods := range o.standbyPool {
+		for _, pod := range pods {
+			if err := o.k8sClient.DeletePod(ctx, pod.Namespace, pod.Name, true); err != nil {
+				o.logger.Warn("failed to delete standby pod",
+					zap.String("pod", pod.Name),
+					zap.Error(err),
+				)
+			}
+		}
+		o.standbyPool[image] = nil
+	}
+
+	o.logger.Info("cleaned up standby pod pool")
+}
+
+// GetPoolStatus returns the current status of the standby pool
+func (o *Orchestrator) GetPoolStatus() map[string]int {
+	o.standbyPoolMutex.Lock()
+	defer o.standbyPoolMutex.Unlock()
+
+	status := make(map[string]int)
+	for image, pods := range o.standbyPool {
+		status[image] = len(pods)
+	}
+	return status
+}
+
+// hashImage creates a short hash of an image name for use in labels
+func hashImage(image string) string {
+	// Simple hash: take first 8 chars of image name (sanitized)
+	h := strings.ReplaceAll(image, "/", "-")
+	h = strings.ReplaceAll(h, ":", "-")
+	if len(h) > 63 {
+		h = h[:63] // Kubernetes label value limit
+	}
+	return h
 }
