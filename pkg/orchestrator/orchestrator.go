@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,8 @@ type Orchestrator struct {
 	// provisionSem limits concurrent environment provisioning to prevent
 	// overwhelming the Kubernetes API with too many parallel requests
 	provisionSem chan struct{}
+	// execSem limits concurrent executions separately from provisioning
+	execSem chan struct{}
 	// executions tracks async command executions
 	executions map[string]*models.Execution
 	execMutex  sync.RWMutex
@@ -58,6 +61,10 @@ type Orchestrator struct {
 // provisioned in parallel. This prevents overwhelming the Kubernetes API.
 const MaxConcurrentProvisions = 10
 
+// MaxConcurrentExecutions is the maximum number of command executions that can
+// run in parallel. This is separate from environment provisioning.
+const MaxConcurrentExecutions = 20
+
 // New creates a new orchestrator instance
 func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) *Orchestrator {
 	o := &Orchestrator{
@@ -67,6 +74,7 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger) 
 		environments:       make(map[string]*models.Environment),
 		namespacePrefix:    cfg.Kubernetes.NamespacePrefix,
 		provisionSem:       make(chan struct{}, MaxConcurrentProvisions),
+		execSem:            make(chan struct{}, MaxConcurrentExecutions),
 		executions:         make(map[string]*models.Execution),
 		ephemeralNamespace: cfg.Kubernetes.NamespacePrefix + "ephemeral",
 		ephemeralNsReady:   false,
@@ -277,11 +285,14 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 	// Use captured envID to avoid accessing env fields
 	now := time.Now()
 	o.envMutex.Lock()
+	var poolEnabled bool
 	if e, exists := o.environments[envID]; exists {
 		// Create a new time value to avoid sharing the pointer
 		startedAt := now
 		e.Status = models.StatusRunning
 		e.StartedAt = &startedAt
+		// Check if pool is enabled for this environment
+		poolEnabled = e.Pool != nil && e.Pool.Enabled
 	}
 	o.envMutex.Unlock()
 
@@ -290,6 +301,11 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 		zap.String("environment_id", envID),
 		zap.String("namespace", envNamespace),
 	)
+
+	// If environment has pool enabled, trigger immediate pool replenishment
+	if poolEnabled {
+		go o.replenishPool()
+	}
 
 	return nil
 }
@@ -785,8 +801,8 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 
 	// Acquire semaphore to limit concurrent executions
 	select {
-	case o.provisionSem <- struct{}{}:
-		defer func() { <-o.provisionSem }()
+	case o.execSem <- struct{}{}:
+		defer func() { <-o.execSem }()
 	case <-ctx.Done():
 		o.updateExecutionError(execID, "timeout waiting in queue")
 		return
@@ -1047,6 +1063,7 @@ func (o *Orchestrator) ListExecutions(ctx context.Context, envID string, limit i
 
 	o.execMutex.RLock()
 	var executions []models.ExecutionResponse
+	totalInMap := len(o.executions)
 	for _, exec := range o.executions {
 		if envID != "" && exec.EnvironmentID != envID {
 			continue
@@ -1067,10 +1084,22 @@ func (o *Orchestrator) ListExecutions(ctx context.Context, envID string, limit i
 	}
 	o.execMutex.RUnlock()
 
+	// Sort by creation time (newest first)
+	sort.Slice(executions, func(i, j int) bool {
+		return executions[i].CreatedAt.After(executions[j].CreatedAt)
+	})
+
 	// Apply limit
 	if len(executions) > limit {
 		executions = executions[:limit]
 	}
+
+	o.logger.Debug("listing executions",
+		zap.String("environment_id", envID),
+		zap.Int("total_in_map", totalInMap),
+		zap.Int("matched", len(executions)),
+		zap.Int("limit", limit),
+	)
 
 	return &models.ExecutionListResponse{
 		Executions: executions,
@@ -1199,6 +1228,10 @@ func (o *Orchestrator) replenishPool() {
 	// Add global default pool if enabled
 	if o.config.Pool.Enabled && o.config.Pool.Size > 0 {
 		imageTargets[o.config.Pool.DefaultImage] = o.config.Pool.Size
+		o.logger.Debug("global pool target",
+			zap.String("image", o.config.Pool.DefaultImage),
+			zap.Int("size", o.config.Pool.Size),
+		)
 	}
 
 	// Add per-environment pools
@@ -1212,6 +1245,11 @@ func (o *Orchestrator) replenishPool() {
 			// Use the larger value if same image has multiple configs
 			if current, exists := imageTargets[env.Image]; !exists || poolSize > current {
 				imageTargets[env.Image] = poolSize
+				o.logger.Debug("per-environment pool target",
+					zap.String("environment_id", env.ID),
+					zap.String("image", env.Image),
+					zap.Int("size", poolSize),
+				)
 			}
 		}
 	}
@@ -1329,6 +1367,9 @@ func (o *Orchestrator) claimStandbyPod(image string) *StandbyPod {
 		zap.String("image", image),
 		zap.Int("remaining", len(o.standbyPool[image])),
 	)
+
+	// Trigger async pool replenishment to replace the claimed pod
+	go o.replenishPool()
 
 	return pod
 }

@@ -54,6 +54,9 @@ func NewRouter(configOrHandler interface{}, proxyHandlerOrNil ...*proxy.Proxy) *
 		api.HandleFunc("/executions/{id}", handler.GetExecution).Methods("GET")
 		api.HandleFunc("/executions/{id}", handler.CancelExecution).Methods("DELETE")
 
+		// Pool status (for debugging)
+		api.HandleFunc("/pool/status", handler.GetPoolStatus).Methods("GET")
+
 		return r
 	}
 
@@ -126,6 +129,9 @@ func NewRouter(configOrHandler interface{}, proxyHandlerOrNil ...*proxy.Proxy) *
 		protected.HandleFunc("/metrics/global", config.MetricsHandler.GetGlobalMetrics).Methods("GET")
 		protected.HandleFunc("/metrics/environment/{id}", config.MetricsHandler.GetEnvironmentMetrics).Methods("GET")
 	}
+
+	// Pool status (for debugging)
+	protected.HandleFunc("/pool/status", config.Handler.GetPoolStatus).Methods("GET")
 
 	return r
 }
