@@ -141,7 +141,7 @@ const (
 	ExecutionStatusRunning   ExecutionStatus = "running"
 	ExecutionStatusCompleted ExecutionStatus = "completed"
 	ExecutionStatusFailed    ExecutionStatus = "failed"
-	ExecutionStatusCanceled ExecutionStatus = "canceled"
+	ExecutionStatusCanceled  ExecutionStatus = "canceled"
 )
 
 // Execution represents an async command execution
