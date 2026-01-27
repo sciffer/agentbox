@@ -46,11 +46,6 @@ type Orchestrator struct {
 	// executions tracks async command executions
 	executions map[string]*models.Execution
 	execMutex  sync.RWMutex
-	// ephemeralNamespace is a shared namespace for all ephemeral executions
-	// This avoids quota conflicts with environment namespaces
-	ephemeralNamespace string
-	ephemeralNsReady   bool
-	ephemeralNsMutex   sync.Mutex
 	// standbyPool holds pre-warmed pods ready for immediate use
 	// Key is the image name, value is a slice of available standby pods
 	standbyPool      map[string][]*StandbyPod
@@ -79,8 +74,6 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, 
 		provisionSem:       make(chan struct{}, MaxConcurrentProvisions),
 		execSem:            make(chan struct{}, MaxConcurrentExecutions),
 		executions:         make(map[string]*models.Execution),
-		ephemeralNamespace: cfg.Kubernetes.NamespacePrefix + "ephemeral",
-		ephemeralNsReady:   false,
 		standbyPool:        make(map[string][]*StandbyPod),
 		poolStopChan:       make(chan struct{}),
 	}
@@ -381,8 +374,13 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 			if envCopy.Status == models.StatusRunning {
 				pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
 				if err == nil {
-					envCopy.Status = convertPodPhaseToStatus(string(pod.Status.Phase))
+					newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
+					// Only update if we got a valid status (don't change to pending for unknown phases)
+					if newStatus != models.StatusPending || pod.Status.Phase == "Pending" {
+						envCopy.Status = newStatus
+					}
 				}
+				// If pod doesn't exist, keep the stored status (don't change to pending)
 			}
 
 			return &envCopy, nil
@@ -404,8 +402,13 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 	if envCopy.Status == models.StatusRunning {
 		pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
 		if err == nil {
-			envCopy.Status = convertPodPhaseToStatus(string(pod.Status.Phase))
+			newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
+			// Only update if we got a valid status (don't change to pending for unknown phases)
+			if newStatus != models.StatusPending || pod.Status.Phase == "Pending" {
+				envCopy.Status = newStatus
+			}
 		}
+		// If pod doesn't exist, keep the stored status (don't change to pending)
 	}
 
 	return &envCopy, nil
@@ -779,59 +782,6 @@ type EphemeralExecRequest struct {
 	Env           map[string]string `json:"env,omitempty"` // Additional env vars (merged with environment's)
 }
 
-// ensureEphemeralNamespace creates the shared ephemeral namespace if it doesn't exist
-// This namespace is used for all ephemeral executions and has a larger quota
-func (o *Orchestrator) ensureEphemeralNamespace(ctx context.Context) error {
-	o.ephemeralNsMutex.Lock()
-	defer o.ephemeralNsMutex.Unlock()
-
-	if o.ephemeralNsReady {
-		return nil
-	}
-
-	labels := map[string]string{
-		"app":        "agentbox",
-		"managed-by": "agentbox",
-		"type":       "ephemeral",
-	}
-
-	// Create namespace (idempotent - ignores "already exists" error)
-	if err := o.k8sClient.CreateNamespace(ctx, o.ephemeralNamespace, labels); err != nil {
-		// Check if namespace already exists
-		exists, checkErr := o.k8sClient.NamespaceExists(ctx, o.ephemeralNamespace)
-		if checkErr != nil || !exists {
-			return fmt.Errorf("failed to create ephemeral namespace: %w", err)
-		}
-	}
-
-	// Create a larger resource quota for concurrent executions
-	// Allow up to 10 concurrent executions with 1 CPU and 1Gi memory each
-	if err := o.k8sClient.CreateResourceQuota(
-		ctx,
-		o.ephemeralNamespace,
-		"10",   // 10 CPUs total
-		"10Gi", // 10Gi memory total
-		"20Gi", // 20Gi storage total
-	); err != nil {
-		o.logger.Warn("failed to create resource quota for ephemeral namespace (may already exist)",
-			zap.Error(err),
-		)
-	}
-
-	// Apply default network policy (restrictive - no internet by default)
-	if err := o.k8sClient.CreateNetworkPolicy(ctx, o.ephemeralNamespace); err != nil {
-		o.logger.Warn("failed to apply network policy to ephemeral namespace (may already exist)",
-			zap.Error(err),
-		)
-	}
-
-	o.ephemeralNsReady = true
-	o.logger.Info("ephemeral namespace ready",
-		zap.String("namespace", o.ephemeralNamespace),
-	)
-
-	return nil
-}
 
 // SubmitExecution queues an async execution and returns immediately with the execution ID
 // The execution runs in a goroutine and can be polled for status via GetExecution
@@ -847,11 +797,6 @@ func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRe
 		return nil, fmt.Errorf("environment is not running (status: %s)", env.Status)
 	}
 
-	// Ensure the shared ephemeral namespace exists
-	if err := o.ensureEphemeralNamespace(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize ephemeral namespace: %w", err)
-	}
-
 	// Generate unique execution ID
 	execID := "exec-" + uuid.New().String()[:8]
 	podName := execID // Use same name for pod
@@ -865,7 +810,7 @@ func (o *Orchestrator) SubmitExecution(ctx context.Context, req *EphemeralExecRe
 		Status:        models.ExecutionStatusPending,
 		UserID:        userID,
 		PodName:       podName,
-		Namespace:     o.ephemeralNamespace, // Use shared ephemeral namespace
+		Namespace:     env.Namespace, // Use environment's namespace
 		CreatedAt:     now,
 	}
 
@@ -923,22 +868,9 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		return
 	}
 
-	// Try to use a standby pod for faster execution
-	standbyPod := o.claimStandbyPod(env.Image)
-
 	// Update status to running
 	now := time.Now()
-	o.execMutex.Lock()
-	if exec, exists := o.executions[execID]; exists {
-		exec.Status = models.ExecutionStatusRunning
-		exec.StartedAt = &now
-		exec.QueuedAt = &now
-		// Update pod name if using standby
-		if standbyPod != nil {
-			exec.PodName = standbyPod.Name
-		}
-	}
-	o.execMutex.Unlock()
+	o.updateExecutionStatus(execID, models.ExecutionStatusRunning, &now)
 
 	// Get execution record
 	o.execMutex.RLock()
@@ -947,13 +879,7 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 	podName := execRecord.PodName
 	o.execMutex.RUnlock()
 
-	// If we got a standby pod, use it with exec
-	if standbyPod != nil {
-		o.runWithStandbyPod(ctx, execID, standbyPod, req.Command, env)
-		return
-	}
-
-	// No standby pod available, create a new one
+	// Create a new pod in the environment's namespace
 
 	o.logger.Info("starting execution (new pod)",
 		zap.String("exec_id", execID),
@@ -1431,14 +1357,9 @@ func (o *Orchestrator) runPoolReplenishment() {
 
 // replenishPool ensures the standby pool has the target number of pods
 func (o *Orchestrator) replenishPool() {
-	// Ensure ephemeral namespace exists
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := o.ensureEphemeralNamespace(ctx); err != nil {
-		o.logger.Error("failed to ensure ephemeral namespace for pool", zap.Error(err))
-		return
-	}
+	// Standby pods are currently disabled - they need to be per-environment namespace
+	// TODO: Implement per-environment standby pods
+	return
 
 	// Collect all images that need standby pods
 	// Map of image -> target pool size
@@ -1505,65 +1426,10 @@ func (o *Orchestrator) replenishPool() {
 
 // createStandbyPod creates a new standby pod for the pool
 func (o *Orchestrator) createStandbyPod(image string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	podID := uuid.New().String()[:8]
-	podName := "standby-" + podID
-
-	labels := map[string]string{
-		"app":        "agentbox",
-		"managed-by": "agentbox",
-		"type":       "standby",
-		"image-hash": hashImage(image),
-	}
-
-	// Create pod with sleep command (idle, waiting for exec)
-	podSpec := &k8s.PodSpec{
-		Name:         podName,
-		Namespace:    o.ephemeralNamespace,
-		Image:        image,
-		Command:      []string{"/bin/sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"},
-		CPU:          o.config.Pool.DefaultCPU,
-		Memory:       o.config.Pool.DefaultMemory,
-		RuntimeClass: o.config.Kubernetes.RuntimeClass,
-		Labels:       labels,
-	}
-
-	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
-		return fmt.Errorf("failed to create standby pod: %w", err)
-	}
-
-	// Wait for pod to be running
-	if err := o.k8sClient.WaitForPodRunning(ctx, o.ephemeralNamespace, podName); err != nil {
-		// Cleanup failed pod (best effort, ignore cleanup errors)
-		if cleanupErr := o.k8sClient.DeletePod(ctx, o.ephemeralNamespace, podName, true); cleanupErr != nil {
-			o.logger.Warn("failed to cleanup failed standby pod",
-				zap.String("pod", podName),
-				zap.Error(cleanupErr),
-			)
-		}
-		return fmt.Errorf("standby pod failed to start: %w", err)
-	}
-
-	// Add to pool
-	standbyPod := &StandbyPod{
-		Name:      podName,
-		Namespace: o.ephemeralNamespace,
-		Image:     image,
-		CreatedAt: time.Now(),
-	}
-
-	o.standbyPoolMutex.Lock()
-	o.standbyPool[image] = append(o.standbyPool[image], standbyPod)
-	o.standbyPoolMutex.Unlock()
-
-	o.logger.Debug("created standby pod",
-		zap.String("pod", podName),
-		zap.String("image", image),
-	)
-
-	return nil
+	// Standby pods are disabled - they need to be per-environment namespace
+	// For now, return error to indicate standby pods are not supported
+	// TODO: Implement per-environment standby pods
+	return fmt.Errorf("standby pods are not yet supported with per-environment namespaces")
 }
 
 // claimStandbyPod attempts to claim a standby pod from the pool
