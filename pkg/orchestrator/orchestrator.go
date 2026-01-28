@@ -65,17 +65,17 @@ const MaxConcurrentExecutions = 20
 // New creates a new orchestrator instance
 func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, db *database.DB) *Orchestrator {
 	o := &Orchestrator{
-		k8sClient:          k8sClient,
-		config:             cfg,
-		logger:             log,
-		db:                 db,
-		environments:       make(map[string]*models.Environment),
-		namespacePrefix:    cfg.Kubernetes.NamespacePrefix,
-		provisionSem:       make(chan struct{}, MaxConcurrentProvisions),
-		execSem:            make(chan struct{}, MaxConcurrentExecutions),
-		executions:         make(map[string]*models.Execution),
-		standbyPool:        make(map[string][]*StandbyPod),
-		poolStopChan:       make(chan struct{}),
+		k8sClient:       k8sClient,
+		config:          cfg,
+		logger:          log,
+		db:              db,
+		environments:    make(map[string]*models.Environment),
+		namespacePrefix: cfg.Kubernetes.NamespacePrefix,
+		provisionSem:    make(chan struct{}, MaxConcurrentProvisions),
+		execSem:         make(chan struct{}, MaxConcurrentExecutions),
+		executions:      make(map[string]*models.Execution),
+		standbyPool:     make(map[string][]*StandbyPod),
+		poolStopChan:    make(chan struct{}),
 	}
 
 	// Load environments and executions from database on startup
@@ -781,7 +781,6 @@ type EphemeralExecRequest struct {
 	Timeout       int               `json:"timeout,omitempty"`
 	Env           map[string]string `json:"env,omitempty"` // Additional env vars (merged with environment's)
 }
-
 
 // SubmitExecution queues an async execution and returns immediately with the execution ID
 // The execution runs in a goroutine and can be polled for status via GetExecution
