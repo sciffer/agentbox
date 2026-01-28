@@ -383,6 +383,11 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 					// Only update if we got a valid status (don't change to pending for unknown phases)
 					if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 						envCopy.Status = newStatus
+						o.envMutex.Lock()
+						if e, ok := o.environments[envID]; ok {
+							e.Status = newStatus
+						}
+						o.envMutex.Unlock()
 					}
 				}
 				// If pod doesn't exist, keep the stored status (don't change to pending)
@@ -411,6 +416,12 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 			// Only update if we got a valid status (don't change to pending for unknown phases)
 			if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 				envCopy.Status = newStatus
+				// Keep cache in sync so subsequent GetEnvironment/ExecuteCommand see consistent status
+				o.envMutex.Lock()
+				if e, ok := o.environments[envID]; ok {
+					e.Status = newStatus
+				}
+				o.envMutex.Unlock()
 			}
 		}
 		// If pod doesn't exist, keep the stored status (don't change to pending)

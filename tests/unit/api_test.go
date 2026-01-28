@@ -344,10 +344,41 @@ func TestExecuteCommandAPIErrorResponses(t *testing.T) {
 		err := json.NewDecoder(rr.Body).Decode(&env)
 		require.NoError(t, err)
 
-		// Leave main pod pending so GetEnvironment sees env as not running
+		// Wait until env is Running (CreateEnvironment goroutine has finished) so it won't overwrite pod phase later
+		var gotRunning bool
+		for i := 0; i < 40; i++ {
+			getReq := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+env.ID, nil)
+			getRr := httptest.NewRecorder()
+			routerWithMock.ServeHTTP(getRr, getReq)
+			if getRr.Code == http.StatusOK {
+				var getEnv models.Environment
+				if json.NewDecoder(getRr.Body).Decode(&getEnv) == nil && getEnv.Status == models.StatusRunning {
+					gotRunning = true
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		require.True(t, gotRunning, "environment should report status running before SetPodPending (poll 2s)")
+
+		// Now set main pod pending so GetEnvironment sees env as not running
 		mockK8s.SetPodPending(env.Namespace, "main")
-		// Brief pause so status refresh in ExecuteCommand sees the updated pod phase (CI runs unit tests with -p 1)
-		time.Sleep(100 * time.Millisecond)
+		// Poll until API reports env as pending (reliable on CI; up to 2s)
+		var gotPending bool
+		for i := 0; i < 40; i++ {
+			getReq := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+env.ID, nil)
+			getRr := httptest.NewRecorder()
+			routerWithMock.ServeHTTP(getRr, getReq)
+			if getRr.Code == http.StatusOK {
+				var getEnv models.Environment
+				if json.NewDecoder(getRr.Body).Decode(&getEnv) == nil && getEnv.Status == models.StatusPending {
+					gotPending = true
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		require.True(t, gotPending, "environment should report status pending after SetPodPending (poll 2s)")
 
 		execReq := models.ExecRequest{
 			Command: []string{"echo", "hello"},
