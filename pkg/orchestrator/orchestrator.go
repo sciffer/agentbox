@@ -1358,69 +1358,10 @@ func (o *Orchestrator) runPoolReplenishment() {
 func (o *Orchestrator) replenishPool() {
 	// Standby pods are currently disabled - they need to be per-environment namespace
 	// TODO: Implement per-environment standby pods
-	return
-
-	// Collect all images that need standby pods
-	// Map of image -> target pool size
-	imageTargets := make(map[string]int)
-
-	// Add global default pool if enabled
-	if o.config.Pool.Enabled && o.config.Pool.Size > 0 {
-		imageTargets[o.config.Pool.DefaultImage] = o.config.Pool.Size
-		o.logger.Debug("global pool target",
-			zap.String("image", o.config.Pool.DefaultImage),
-			zap.Int("size", o.config.Pool.Size),
-		)
-	}
-
-	// Add per-environment pools
-	o.envMutex.RLock()
-	for _, env := range o.environments {
-		if env.Pool != nil && env.Pool.Enabled && env.Status == models.StatusRunning {
-			poolSize := env.Pool.Size
-			if poolSize <= 0 {
-				poolSize = 2 // Default pool size
-			}
-			// Use the larger value if same image has multiple configs
-			if current, exists := imageTargets[env.Image]; !exists || poolSize > current {
-				imageTargets[env.Image] = poolSize
-				o.logger.Debug("per-environment pool target",
-					zap.String("environment_id", env.ID),
-					zap.String("image", env.Image),
-					zap.Int("size", poolSize),
-				)
-			}
-		}
-	}
-	o.envMutex.RUnlock()
-
-	// Replenish pools for each image
-	for image, targetSize := range imageTargets {
-		o.standbyPoolMutex.Lock()
-		currentSize := len(o.standbyPool[image])
-		needed := targetSize - currentSize
-		o.standbyPoolMutex.Unlock()
-
-		if needed <= 0 {
-			continue
-		}
-
-		o.logger.Debug("replenishing standby pool",
-			zap.String("image", image),
-			zap.Int("current", currentSize),
-			zap.Int("target", targetSize),
-			zap.Int("creating", needed),
-		)
-
-		for i := 0; i < needed; i++ {
-			if err := o.createStandbyPod(image); err != nil {
-				o.logger.Warn("failed to create standby pod",
-					zap.String("image", image),
-					zap.Error(err),
-				)
-			}
-		}
-	}
+	// When re-implementing, this function should:
+	// 1. Collect all images that need standby pods (per environment)
+	// 2. Create standby pods in each environment's namespace
+	// 3. Track pods by environment ID + image, not just image
 }
 
 // createStandbyPod creates a new standby pod for the pool
