@@ -129,6 +129,7 @@ func (h *Handler) ListEnvironments(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExecuteCommand handles POST /environments/{id}/exec
+// Request body must be JSON: {"command": ["cmd", "arg1", ...], "timeout": 300}
 func (h *Handler) ExecuteCommand(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	vars := mux.Vars(r)
@@ -137,22 +138,35 @@ func (h *Handler) ExecuteCommand(w http.ResponseWriter, r *http.Request) {
 	// Limit request body size
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64KB limit for exec requests
 
+	if r.Body == nil || r.ContentLength == 0 {
+		h.respondError(w, http.StatusBadRequest, "request body is required (JSON: {\"command\": [\"cmd\", \"arg1\", ...], \"timeout\": 300})", nil)
+		return
+	}
+
 	var req models.ExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
+		h.respondError(w, http.StatusBadRequest, "invalid request body: must be JSON with \"command\" array", err)
 		return
 	}
 	defer r.Body.Close()
 
 	// Validate request
 	if err := h.validator.ValidateExecRequest(&req); err != nil {
-		h.respondError(w, http.StatusBadRequest, "validation failed", err)
+		h.respondError(w, http.StatusBadRequest, err.Error(), err)
 		return
 	}
 
 	// Execute command
 	resp, err := h.orchestrator.ExecuteCommand(ctx, envID, req.Command, req.Timeout)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "environment not found", err)
+			return
+		}
+		if strings.Contains(err.Error(), "not running") {
+			h.respondError(w, http.StatusBadRequest, "environment is not running", err)
+			return
+		}
 		h.respondError(w, http.StatusInternalServerError, "failed to execute command", err)
 		return
 	}
@@ -515,13 +529,10 @@ func (h *Handler) respondJSON(w http.ResponseWriter, status int, data interface{
 func (h *Handler) respondError(w http.ResponseWriter, status int, message string, err error) {
 	h.logger.Error(message, zap.Error(err))
 
-	// Don't expose internal error details to client
+	// For 4xx include error details; for 5xx include error details to help debugging (e.g. exec failures)
 	errMsg := message
 	if err != nil {
-		// Only include error message for client errors (4xx), not server errors (5xx)
-		if status >= 400 && status < 500 {
-			errMsg = err.Error()
-		}
+		errMsg = err.Error()
 	}
 
 	errResp := models.ErrorResponse{

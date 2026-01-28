@@ -46,8 +46,7 @@ type Orchestrator struct {
 	// executions tracks async command executions
 	executions map[string]*models.Execution
 	execMutex  sync.RWMutex
-	// standbyPool holds pre-warmed pods ready for immediate use
-	// Key is the image name, value is a slice of available standby pods
+	// standbyPool holds pre-warmed pods per environment; key is environment ID
 	standbyPool      map[string][]*StandbyPod
 	standbyPoolMutex sync.Mutex
 	// poolStopChan signals the pool replenishment goroutine to stop
@@ -384,6 +383,11 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 					// Only update if we got a valid status (don't change to pending for unknown phases)
 					if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 						envCopy.Status = newStatus
+						o.envMutex.Lock()
+						if e, ok := o.environments[envID]; ok {
+							e.Status = newStatus
+						}
+						o.envMutex.Unlock()
 					}
 				}
 				// If pod doesn't exist, keep the stored status (don't change to pending)
@@ -412,6 +416,12 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 			// Only update if we got a valid status (don't change to pending for unknown phases)
 			if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 				envCopy.Status = newStatus
+				// Keep cache in sync so subsequent GetEnvironment/ExecuteCommand see consistent status
+				o.envMutex.Lock()
+				if e, ok := o.environments[envID]; ok {
+					e.Status = newStatus
+				}
+				o.envMutex.Unlock()
 			}
 		}
 		// If pod doesn't exist, keep the stored status (don't change to pending)
@@ -873,9 +883,35 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		return
 	}
 
+	// Try to use a standby pod for faster execution (per-environment pool)
+	standbyPod := o.claimStandbyPod(env.ID)
+
 	// Update status to running
 	now := time.Now()
-	o.updateExecutionStatus(execID, models.ExecutionStatusRunning, &now)
+	o.execMutex.Lock()
+	if exec, exists := o.executions[execID]; exists {
+		exec.Status = models.ExecutionStatusRunning
+		exec.StartedAt = &now
+		exec.QueuedAt = &now
+		if standbyPod != nil {
+			exec.PodName = standbyPod.Name
+			exec.Namespace = standbyPod.Namespace
+		}
+	}
+	o.execMutex.Unlock()
+
+	// Save execution status (including pod name/namespace if using standby)
+	if o.db != nil {
+		o.execMutex.RLock()
+		execForDB := o.executions[execID]
+		o.execMutex.RUnlock()
+		if execForDB != nil {
+			dbCtx := context.Background()
+			if err := o.db.SaveExecution(dbCtx, execForDB); err != nil {
+				o.logger.Error("failed to save execution status", zap.Error(err), zap.String("execution_id", execID))
+			}
+		}
+	}
 
 	// Get execution record
 	o.execMutex.RLock()
@@ -884,8 +920,12 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 	podName := execRecord.PodName
 	o.execMutex.RUnlock()
 
-	// Create a new pod in the environment's namespace
+	if standbyPod != nil {
+		o.runWithStandbyPod(ctx, execID, standbyPod, req.Command, env)
+		return
+	}
 
+	// No standby available, create a new ephemeral pod (unique name: exec-<uuid>)
 	o.logger.Info("starting execution (new pod)",
 		zap.String("exec_id", execID),
 		zap.String("pod", podName),
@@ -1024,6 +1064,79 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 		zap.Int("exit_code", result.ExitCode),
 		zap.Int64("duration_ms", durationMs),
 	)
+}
+
+// runWithStandbyPod executes a command in a pre-warmed standby pod (single-use; pod is deleted after)
+func (o *Orchestrator) runWithStandbyPod(ctx context.Context, execID string, standbyPod *StandbyPod, command []string, env *models.Environment) {
+	o.logger.Info("starting execution (standby pod)",
+		zap.String("exec_id", execID),
+		zap.String("pod", standbyPod.Name),
+		zap.String("namespace", standbyPod.Namespace),
+		zap.String("image", standbyPod.Image),
+	)
+
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := o.k8sClient.DeletePod(cleanupCtx, standbyPod.Namespace, standbyPod.Name, true); err != nil {
+			o.logger.Warn("failed to cleanup standby pod",
+				zap.String("exec_id", execID),
+				zap.String("pod", standbyPod.Name),
+				zap.Error(err),
+			)
+		} else {
+			o.logger.Debug("cleaned up standby pod",
+				zap.String("exec_id", execID),
+				zap.String("pod", standbyPod.Name),
+			)
+		}
+	}()
+
+	startTime := time.Now()
+	var stdoutBuf, stderrBuf bytes.Buffer
+	err := o.k8sClient.ExecInPod(ctx, standbyPod.Namespace, standbyPod.Name, command, nil, &stdoutBuf, &stderrBuf)
+	duration := time.Since(startTime)
+
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+	}
+
+	completedAt := time.Now()
+	durationMs := duration.Milliseconds()
+	o.execMutex.Lock()
+	var exec *models.Execution
+	var exists bool
+	if exec, exists = o.executions[execID]; exists {
+		if err != nil {
+			exec.Status = models.ExecutionStatusFailed
+			exec.Error = err.Error()
+		} else {
+			exec.Status = models.ExecutionStatusCompleted
+		}
+		exec.CompletedAt = &completedAt
+		exec.ExitCode = &exitCode
+		exec.Stdout = stdoutBuf.String()
+		exec.Stderr = stderrBuf.String()
+		exec.DurationMs = &durationMs
+	}
+	o.execMutex.Unlock()
+
+	if exists && o.db != nil {
+		if err := o.db.SaveExecution(ctx, exec); err != nil {
+			o.logger.Error("failed to save execution results to database", zap.Error(err), zap.String("execution_id", execID))
+		}
+	}
+
+	o.logger.Info("execution completed (standby pod)",
+		zap.String("exec_id", execID),
+		zap.String("pod", standbyPod.Name),
+		zap.Int("exit_code", exitCode),
+		zap.Int64("duration_ms", durationMs),
+	)
+
+	// Trigger replenishment for this environment
+	go o.replenishPool()
 }
 
 // GetExecution retrieves an execution by ID
@@ -1285,14 +1398,167 @@ func (o *Orchestrator) runPoolReplenishment() {
 	}
 }
 
-// replenishPool ensures the standby pool has the target number of pods
+// replenishPool ensures each environment with pool enabled has the target number of standby pods
 func (o *Orchestrator) replenishPool() {
-	// Standby pods are currently disabled - they need to be per-environment namespace
-	// TODO: Implement per-environment standby pods
-	// When re-implementing, this function should:
-	// 1. Collect all images that need standby pods (per environment)
-	// 2. Create standby pods in each environment's namespace
-	// 3. Track pods by environment ID + image, not just image
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	o.envMutex.RLock()
+	envsToReplenish := make([]*models.Environment, 0, len(o.environments))
+	for _, env := range o.environments {
+		if env.Pool != nil && env.Pool.Enabled && env.Status == models.StatusRunning {
+			envsToReplenish = append(envsToReplenish, env)
+		}
+	}
+	o.envMutex.RUnlock()
+
+	for _, env := range envsToReplenish {
+		poolSize := env.Pool.Size
+		if poolSize <= 0 {
+			poolSize = 2
+		}
+		o.standbyPoolMutex.Lock()
+		current := len(o.standbyPool[env.ID])
+		needed := poolSize - current
+		o.standbyPoolMutex.Unlock()
+
+		if needed <= 0 {
+			continue
+		}
+
+		o.logger.Debug("replenishing standby pool",
+			zap.String("environment_id", env.ID),
+			zap.Int("current", current),
+			zap.Int("target", poolSize),
+			zap.Int("creating", needed),
+		)
+
+		for i := 0; i < needed; i++ {
+			if err := o.createStandbyPod(ctx, env); err != nil {
+				o.logger.Warn("failed to create standby pod",
+					zap.String("environment_id", env.ID),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+}
+
+// createStandbyPod creates one standby pod in the environment's namespace with a unique name
+func (o *Orchestrator) createStandbyPod(ctx context.Context, env *models.Environment) error {
+	podName := "standby-" + uuid.New().String()[:8]
+
+	runtimeClass := o.config.Kubernetes.RuntimeClass
+	if env.Isolation != nil && env.Isolation.RuntimeClass != "" {
+		runtimeClass = env.Isolation.RuntimeClass
+	}
+	var securityContext *k8s.SecurityContext
+	if env.Isolation != nil && env.Isolation.SecurityContext != nil {
+		securityContext = &k8s.SecurityContext{
+			RunAsUser:                env.Isolation.SecurityContext.RunAsUser,
+			RunAsGroup:               env.Isolation.SecurityContext.RunAsGroup,
+			RunAsNonRoot:             env.Isolation.SecurityContext.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   env.Isolation.SecurityContext.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: env.Isolation.SecurityContext.AllowPrivilegeEscalation,
+		}
+	}
+	var k8sTolerations []k8s.Toleration
+	for _, t := range env.Tolerations {
+		k8sTolerations = append(k8sTolerations, k8s.Toleration{
+			Key:               t.Key,
+			Operator:          t.Operator,
+			Value:             t.Value,
+			Effect:            t.Effect,
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+
+	labels := map[string]string{
+		"app":            "agentbox",
+		"managed-by":     "agentbox",
+		"type":           "standby",
+		"environment-id": env.ID,
+	}
+	for k, v := range env.Labels {
+		labels[k] = v
+	}
+
+	cpu := env.Resources.CPU
+	mem := env.Resources.Memory
+	if cpu == "" {
+		cpu = o.config.Pool.DefaultCPU
+	}
+	if mem == "" {
+		mem = o.config.Pool.DefaultMemory
+	}
+
+	podSpec := &k8s.PodSpec{
+		Name:            podName,
+		Namespace:       env.Namespace,
+		Image:           env.Image,
+		Command:         []string{"/bin/sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+		CPU:             cpu,
+		Memory:          mem,
+		Storage:         env.Resources.Storage,
+		RuntimeClass:    runtimeClass,
+		Labels:          labels,
+		NodeSelector:    env.NodeSelector,
+		Tolerations:     k8sTolerations,
+		SecurityContext: securityContext,
+	}
+
+	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
+		return fmt.Errorf("create standby pod: %w", err)
+	}
+
+	if err := o.k8sClient.WaitForPodRunning(ctx, env.Namespace, podName); err != nil {
+		if delErr := o.k8sClient.DeletePod(ctx, env.Namespace, podName, true); delErr != nil {
+			o.logger.Warn("failed to delete standby pod after start failure", zap.Error(delErr), zap.String("pod", podName), zap.String("namespace", env.Namespace))
+		}
+		return fmt.Errorf("standby pod failed to start: %w", err)
+	}
+
+	standbyPod := &StandbyPod{
+		Name:      podName,
+		Namespace: env.Namespace,
+		Image:     env.Image,
+		CreatedAt: time.Now(),
+	}
+
+	o.standbyPoolMutex.Lock()
+	o.standbyPool[env.ID] = append(o.standbyPool[env.ID], standbyPod)
+	o.standbyPoolMutex.Unlock()
+
+	o.logger.Debug("created standby pod",
+		zap.String("pod", podName),
+		zap.String("namespace", env.Namespace),
+		zap.String("environment_id", env.ID),
+	)
+	return nil
+}
+
+// claimStandbyPod takes one standby pod from the pool for the environment; returns nil if none available
+func (o *Orchestrator) claimStandbyPod(envID string) *StandbyPod {
+	o.standbyPoolMutex.Lock()
+	defer o.standbyPoolMutex.Unlock()
+
+	pods := o.standbyPool[envID]
+	if len(pods) == 0 {
+		return nil
+	}
+
+	pod := pods[0]
+	o.standbyPool[envID] = pods[1:]
+
+	o.logger.Debug("claimed standby pod",
+		zap.String("pod", pod.Name),
+		zap.String("namespace", pod.Namespace),
+		zap.String("environment_id", envID),
+		zap.Int("remaining", len(o.standbyPool[envID])),
+	)
+
+	go o.replenishPool()
+	return pod
 }
 
 // cleanupPool removes all standby pods (called on shutdown)
@@ -1303,29 +1569,30 @@ func (o *Orchestrator) cleanupPool() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	for image, pods := range o.standbyPool {
+	for envID, pods := range o.standbyPool {
 		for _, pod := range pods {
 			if err := o.k8sClient.DeletePod(ctx, pod.Namespace, pod.Name, true); err != nil {
 				o.logger.Warn("failed to delete standby pod",
 					zap.String("pod", pod.Name),
+					zap.String("environment_id", envID),
 					zap.Error(err),
 				)
 			}
 		}
-		o.standbyPool[image] = nil
+		o.standbyPool[envID] = nil
 	}
 
 	o.logger.Info("cleaned up standby pod pool")
 }
 
-// GetPoolStatus returns the current status of the standby pool
+// GetPoolStatus returns per-environment standby pool counts (key = environment ID)
 func (o *Orchestrator) GetPoolStatus() map[string]int {
 	o.standbyPoolMutex.Lock()
 	defer o.standbyPoolMutex.Unlock()
 
 	status := make(map[string]int)
-	for image, pods := range o.standbyPool {
-		status[image] = len(pods)
+	for envID, pods := range o.standbyPool {
+		status[envID] = len(pods)
 	}
 	return status
 }

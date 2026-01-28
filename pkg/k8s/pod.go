@@ -263,6 +263,9 @@ func (c *Client) WaitForPodRunning(ctx context.Context, namespace, name string) 
 	}
 }
 
+// DefaultContainerName is the container name used in agentbox-created pods (main pod and ephemeral)
+const DefaultContainerName = "main"
+
 // ExecInPod executes a command in a running pod
 func (c *Client) ExecInPod(ctx context.Context, namespace, podName string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	req := c.clientset.CoreV1().RESTClient().Post().
@@ -271,11 +274,12 @@ func (c *Client) ExecInPod(ctx context.Context, namespace, podName string, comma
 		Namespace(namespace).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
-			Command: command,
-			Stdin:   stdin != nil,
-			Stdout:  stdout != nil,
-			Stderr:  stderr != nil,
-			TTY:     false,
+			Container: DefaultContainerName,
+			Command:   command,
+			Stdin:     stdin != nil,
+			Stdout:    stdout != nil,
+			Stderr:    stderr != nil,
+			TTY:       false,
 		}, scheme.ParameterCodec)
 
 	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())

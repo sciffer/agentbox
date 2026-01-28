@@ -300,6 +300,106 @@ func TestExecuteCommandAPI(t *testing.T) {
 	})
 }
 
+func TestExecuteCommandAPIErrorResponses(t *testing.T) {
+	_, router := setupAPITest(t)
+
+	t.Run("exec on non-existent environment returns 404 and error body", func(t *testing.T) {
+		execReq := models.ExecRequest{
+			Command: []string{"echo", "hello"},
+			Timeout: 30,
+		}
+		body, _ := json.Marshal(execReq)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments/non-existent-id/exec", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+		var errResp models.ErrorResponse
+		err := json.NewDecoder(rr.Body).Decode(&errResp)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusNotFound, errResp.Code)
+		assert.NotEmpty(t, errResp.Error)
+		assert.NotEmpty(t, errResp.Message, "message should contain underlying error for debugging")
+	})
+
+	t.Run("exec on pending environment returns 400 and not running message", func(t *testing.T) {
+		_, mockK8s, routerWithMock := setupAPITestWithMock(t)
+		createReq := models.CreateEnvironmentRequest{
+			Name:  "pending-env",
+			Image: "python:3.11-slim",
+			Resources: models.ResourceSpec{
+				CPU:     "500m",
+				Memory:  "512Mi",
+				Storage: "1Gi",
+			},
+		}
+		body, _ := json.Marshal(createReq)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		routerWithMock.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusCreated, rr.Code)
+		var env models.Environment
+		err := json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+
+		// Wait until env is Running (CreateEnvironment goroutine has finished) so it won't overwrite pod phase later
+		var gotRunning bool
+		for i := 0; i < 40; i++ {
+			getReq := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+env.ID, nil)
+			getRr := httptest.NewRecorder()
+			routerWithMock.ServeHTTP(getRr, getReq)
+			if getRr.Code == http.StatusOK {
+				var getEnv models.Environment
+				if json.NewDecoder(getRr.Body).Decode(&getEnv) == nil && getEnv.Status == models.StatusRunning {
+					gotRunning = true
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		require.True(t, gotRunning, "environment should report status running before SetPodPending (poll 2s)")
+
+		// Now set main pod pending so GetEnvironment sees env as not running
+		mockK8s.SetPodPending(env.Namespace, "main")
+		// Poll until API reports env as pending (reliable on CI; up to 2s)
+		var gotPending bool
+		for i := 0; i < 40; i++ {
+			getReq := httptest.NewRequest(http.MethodGet, "/api/v1/environments/"+env.ID, nil)
+			getRr := httptest.NewRecorder()
+			routerWithMock.ServeHTTP(getRr, getReq)
+			if getRr.Code == http.StatusOK {
+				var getEnv models.Environment
+				if json.NewDecoder(getRr.Body).Decode(&getEnv) == nil && getEnv.Status == models.StatusPending {
+					gotPending = true
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		require.True(t, gotPending, "environment should report status pending after SetPodPending (poll 2s)")
+
+		execReq := models.ExecRequest{
+			Command: []string{"echo", "hello"},
+			Timeout: 30,
+		}
+		body, _ = json.Marshal(execReq)
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/environments/"+env.ID+"/exec", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr = httptest.NewRecorder()
+		routerWithMock.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		var errResp models.ErrorResponse
+		err = json.NewDecoder(rr.Body).Decode(&errResp)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, errResp.Code)
+		assert.Contains(t, errResp.Error, "not running")
+		assert.NotEmpty(t, errResp.Message)
+	})
+}
+
 func TestDeleteEnvironmentAPI(t *testing.T) {
 	_, router := setupAPITest(t)
 
