@@ -1062,6 +1062,54 @@ func TestListEnvironmentsWithPoolEnabled(t *testing.T) {
 	assert.Equal(t, 2, poolEnabledCount, "Expected 2 environments with pool enabled")
 }
 
+func TestGetPoolStatusPerEnvironment(t *testing.T) {
+	orch, _ := setupOrchestrator(t)
+	ctx := context.Background()
+
+	// Create two environments with pool enabled (different env IDs)
+	req1 := &models.CreateEnvironmentRequest{
+		Name:  "pool-env-a",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Pool: &models.PoolConfig{Enabled: true, Size: 2},
+	}
+	env1, err := orch.CreateEnvironment(ctx, req1, "user-123")
+	require.NoError(t, err)
+
+	req2 := &models.CreateEnvironmentRequest{
+		Name:  "pool-env-b",
+		Image: "node:18-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+		Pool: &models.PoolConfig{Enabled: true, Size: 3},
+	}
+	env2, err := orch.CreateEnvironment(ctx, req2, "user-123")
+	require.NoError(t, err)
+
+	status := orch.GetPoolStatus()
+
+	// GetPoolStatus returns map keyed by environment ID (per-environment pool)
+	assert.NotNil(t, status)
+	for envID, count := range status {
+		assert.Contains(t, []string{env1.ID, env2.ID}, envID, "pool key should be an environment ID")
+		assert.GreaterOrEqual(t, count, 0, "standby count should be non-negative")
+	}
+	// Each env with pool enabled may appear in status (depending on replenish)
+	envIDs := []string{env1.ID, env2.ID}
+	for _, id := range envIDs {
+		if c, ok := status[id]; ok {
+			assert.GreaterOrEqual(t, c, 0)
+		}
+	}
+}
+
 func TestSubmitExecutionCleansUpPod(t *testing.T) {
 	orch, mockK8s := setupOrchestrator(t)
 	ctx := context.Background()

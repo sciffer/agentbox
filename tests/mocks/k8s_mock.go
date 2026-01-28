@@ -347,6 +347,18 @@ func (m *MockK8sClient) SetPodFailed(namespace, name string) {
 	}
 }
 
+// SetPodPending manually sets a pod to pending state (for testing exec on non-running env)
+func (m *MockK8sClient) SetPodPending(namespace, name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if pods, ok := m.pods[namespace]; ok {
+		if pod, ok := pods[name]; ok {
+			pod.Status.Phase = corev1.PodPending
+		}
+	}
+}
+
 // GetPodCount returns the number of pods in a namespace
 func (m *MockK8sClient) GetPodCount(namespace string) int {
 	m.mu.RLock()
