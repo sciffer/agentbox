@@ -62,6 +62,12 @@ const MaxConcurrentProvisions = 10
 // run in parallel. This is separate from environment provisioning.
 const MaxConcurrentExecutions = 20
 
+// Kubernetes pod phases
+const (
+	podPhasePending = "Pending"
+	podPhaseRunning = "Running"
+)
+
 // New creates a new orchestrator instance
 func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, db *database.DB) *Orchestrator {
 	o := &Orchestrator{
@@ -376,7 +382,7 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 				if err == nil {
 					newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
 					// Only update if we got a valid status (don't change to pending for unknown phases)
-					if newStatus != models.StatusPending || pod.Status.Phase == "Pending" {
+					if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 						envCopy.Status = newStatus
 					}
 				}
@@ -404,7 +410,7 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 		if err == nil {
 			newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
 			// Only update if we got a valid status (don't change to pending for unknown phases)
-			if newStatus != models.StatusPending || pod.Status.Phase == "Pending" {
+			if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 				envCopy.Status = newStatus
 			}
 		}
@@ -716,9 +722,9 @@ func (o *Orchestrator) updateEnvironmentStatus(envID string, status models.Envir
 
 func convertPodPhaseToStatus(phase string) models.EnvironmentStatus {
 	switch phase {
-	case "Pending":
+	case podPhasePending:
 		return models.StatusPending
-	case "Running":
+	case podPhaseRunning:
 		return models.StatusRunning
 	case "Succeeded":
 		return models.StatusTerminated
@@ -1020,81 +1026,6 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 	)
 }
 
-// runWithStandbyPod executes a command using a pre-warmed standby pod
-func (o *Orchestrator) runWithStandbyPod(ctx context.Context, execID string, standbyPod *StandbyPod, command []string, env *models.Environment) {
-	o.logger.Info("starting execution (standby pod)",
-		zap.String("exec_id", execID),
-		zap.String("pod", standbyPod.Name),
-		zap.String("image", standbyPod.Image),
-	)
-
-	// Ensure pod cleanup after execution (standby pods are single-use)
-	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		if err := o.k8sClient.DeletePod(cleanupCtx, standbyPod.Namespace, standbyPod.Name, true); err != nil {
-			o.logger.Warn("failed to cleanup standby pod",
-				zap.String("exec_id", execID),
-				zap.String("pod", standbyPod.Name),
-				zap.Error(err),
-			)
-		} else {
-			o.logger.Debug("cleaned up standby pod",
-				zap.String("exec_id", execID),
-				zap.String("pod", standbyPod.Name),
-			)
-		}
-	}()
-
-	// Execute command in the standby pod
-	startTime := time.Now()
-	var stdoutBuf, stderrBuf bytes.Buffer
-
-	err := o.k8sClient.ExecInPod(ctx, standbyPod.Namespace, standbyPod.Name, command, nil, &stdoutBuf, &stderrBuf)
-	duration := time.Since(startTime)
-
-	// Determine exit code (0 if no error, 1 otherwise)
-	exitCode := 0
-	if err != nil {
-		exitCode = 1
-	}
-
-	// Update execution with results
-	completedAt := time.Now()
-	durationMs := duration.Milliseconds()
-	o.execMutex.Lock()
-	var exec *models.Execution
-	var exists bool
-	if exec, exists = o.executions[execID]; exists {
-		if err != nil {
-			exec.Status = models.ExecutionStatusFailed
-			exec.Error = err.Error()
-		} else {
-			exec.Status = models.ExecutionStatusCompleted
-		}
-		exec.CompletedAt = &completedAt
-		exec.ExitCode = &exitCode
-		exec.Stdout = stdoutBuf.String()
-		exec.Stderr = stderrBuf.String()
-		exec.DurationMs = &durationMs
-	}
-	o.execMutex.Unlock()
-
-	// Save to database
-	if exists && o.db != nil {
-		if err := o.db.SaveExecution(ctx, exec); err != nil {
-			o.logger.Error("failed to save execution results to database", zap.Error(err), zap.String("execution_id", execID))
-		}
-	}
-
-	o.logger.Info("execution completed (standby pod)",
-		zap.String("exec_id", execID),
-		zap.String("pod", standbyPod.Name),
-		zap.Int("exit_code", exitCode),
-		zap.Int64("duration_ms", durationMs),
-	)
-}
-
 // GetExecution retrieves an execution by ID
 func (o *Orchestrator) GetExecution(ctx context.Context, execID string) (*models.Execution, error) {
 	// Try database first (for persistence across restarts)
@@ -1364,41 +1295,6 @@ func (o *Orchestrator) replenishPool() {
 	// 3. Track pods by environment ID + image, not just image
 }
 
-// createStandbyPod creates a new standby pod for the pool
-func (o *Orchestrator) createStandbyPod(image string) error {
-	// Standby pods are disabled - they need to be per-environment namespace
-	// For now, return error to indicate standby pods are not supported
-	// TODO: Implement per-environment standby pods
-	return fmt.Errorf("standby pods are not yet supported with per-environment namespaces")
-}
-
-// claimStandbyPod attempts to claim a standby pod from the pool
-// Returns nil if no matching pod is available
-func (o *Orchestrator) claimStandbyPod(image string) *StandbyPod {
-	o.standbyPoolMutex.Lock()
-	defer o.standbyPoolMutex.Unlock()
-
-	pods := o.standbyPool[image]
-	if len(pods) == 0 {
-		return nil
-	}
-
-	// Take the first available pod (FIFO)
-	pod := pods[0]
-	o.standbyPool[image] = pods[1:]
-
-	o.logger.Debug("claimed standby pod",
-		zap.String("pod", pod.Name),
-		zap.String("image", image),
-		zap.Int("remaining", len(o.standbyPool[image])),
-	)
-
-	// Trigger async pool replenishment to replace the claimed pod
-	go o.replenishPool()
-
-	return pod
-}
-
 // cleanupPool removes all standby pods (called on shutdown)
 func (o *Orchestrator) cleanupPool() {
 	o.standbyPoolMutex.Lock()
@@ -1432,15 +1328,4 @@ func (o *Orchestrator) GetPoolStatus() map[string]int {
 		status[image] = len(pods)
 	}
 	return status
-}
-
-// hashImage creates a short hash of an image name for use in labels
-func hashImage(image string) string {
-	// Simple hash: take first 8 chars of image name (sanitized)
-	h := strings.ReplaceAll(image, "/", "-")
-	h = strings.ReplaceAll(h, ":", "-")
-	if len(h) > 63 {
-		h = h[:63] // Kubernetes label value limit
-	}
-	return h
 }
