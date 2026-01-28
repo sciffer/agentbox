@@ -1501,7 +1501,9 @@ func (o *Orchestrator) createStandbyPod(ctx context.Context, env *models.Environ
 	}
 
 	if err := o.k8sClient.WaitForPodRunning(ctx, env.Namespace, podName); err != nil {
-		_ = o.k8sClient.DeletePod(ctx, env.Namespace, podName, true)
+		if delErr := o.k8sClient.DeletePod(ctx, env.Namespace, podName, true); delErr != nil {
+			o.logger.Warn("failed to delete standby pod after start failure", zap.Error(delErr), zap.String("pod", podName), zap.String("namespace", env.Namespace))
+		}
 		return fmt.Errorf("standby pod failed to start: %w", err)
 	}
 

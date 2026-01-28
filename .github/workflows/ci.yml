@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Run unit tests
-        run: go test -count=1 ./tests/unit/... -v
+        run: go test -count=1 -p 1 ./tests/unit/... -v
         continue-on-error: false
         env:
           AGENTBOX_DB_PATH: /tmp/test-$${GITHUB_RUN_ID}.db

@@ -346,8 +346,8 @@ func TestExecuteCommandAPIErrorResponses(t *testing.T) {
 
 		// Leave main pod pending so GetEnvironment sees env as not running
 		mockK8s.SetPodPending(env.Namespace, "main")
-		// Brief pause so status refresh in ExecuteCommand sees the updated pod phase when tests run in parallel
-		time.Sleep(50 * time.Millisecond)
+		// Brief pause so status refresh in ExecuteCommand sees the updated pod phase (CI runs unit tests with -p 1)
+		time.Sleep(100 * time.Millisecond)
 
 		execReq := models.ExecRequest{
 			Command: []string{"echo", "hello"},
