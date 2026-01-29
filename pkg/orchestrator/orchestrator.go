@@ -1775,7 +1775,9 @@ func (o *Orchestrator) reconcilePendingOrFailed(ctx context.Context, env *models
 	o.logReconciliationEvent(envID, "reconciliation_start", "Reconciliation attempt started", fmt.Sprintf("attempt %d of %d", retryCount+1, maxRetries))
 
 	// Delete main pod if it exists (e.g. stuck Pending/Failed) so provisionEnvironment can recreate
-	_ = o.k8sClient.DeletePod(ctx, envNamespace, "main", true)
+	if errDel := o.k8sClient.DeletePod(ctx, envNamespace, "main", true); errDel != nil {
+		o.logger.Debug("delete pod before reconciliation (best-effort)", zap.String("namespace", envNamespace), zap.Error(errDel))
+	}
 
 	// Re-acquire env from map for latest spec
 	o.envMutex.RLock()
@@ -1803,14 +1805,18 @@ func (o *Orchestrator) reconcilePendingOrFailed(ctx context.Context, env *models
 		o.envMutex.Unlock()
 
 		if o.db != nil {
-			_ = o.db.UpdateEnvironmentReconciliationState(ctx, envID, newCount, errMsg, &now)
+			if errDB := o.db.UpdateEnvironmentReconciliationState(ctx, envID, newCount, errMsg, &now); errDB != nil {
+				o.logger.Warn("failed to update environment reconciliation state", zap.String("env_id", envID), zap.Error(errDB))
+			}
 		}
 
 		o.logReconciliationEvent(envID, "reconciliation_failure", "Reconciliation failed", errMsg)
 
 		if newCount >= maxRetries {
 			o.updateEnvironmentStatus(envID, models.StatusFailed)
-			o.logReconciliationEvent(envID, "reconciliation_max_retries", "Max reconciliation retries exceeded; use Retry button to try again", fmt.Sprintf("attempts: %d", newCount))
+			o.logReconciliationEvent(envID, "reconciliation_max_retries",
+				"Max reconciliation retries exceeded; use Retry button to try again",
+				fmt.Sprintf("attempts: %d", newCount))
 		}
 		return
 	}
@@ -1825,7 +1831,9 @@ func (o *Orchestrator) reconcilePendingOrFailed(ctx context.Context, env *models
 	o.envMutex.Unlock()
 
 	if o.db != nil {
-		_ = o.db.UpdateEnvironmentReconciliationState(ctx, envID, 0, "", nil)
+		if errDB := o.db.UpdateEnvironmentReconciliationState(ctx, envID, 0, "", nil); errDB != nil {
+			o.logger.Warn("failed to reset environment reconciliation state", zap.String("env_id", envID), zap.Error(errDB))
+		}
 	}
 
 	o.logReconciliationEvent(envID, "reconciliation_success", "Environment provisioned successfully", "")
