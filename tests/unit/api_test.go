@@ -47,7 +47,7 @@ func setupAPITestWithMock(t *testing.T) (*api.Handler, *mocks.MockK8sClient, *mu
 
 	val := validator.New(10000, 10*1024*1024*1024, 100*1024*1024*1024, 86400)
 
-	handler := api.NewHandler(orch, val, log)
+	handler := api.NewHandler(orch, val, log, nil)
 	router := api.NewRouter(handler, nil) // nil proxy for unit tests
 
 	return handler, mockK8s, router
@@ -456,6 +456,114 @@ func TestDeleteEnvironmentAPI(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusNoContent, rr.Code)
+	})
+}
+
+func TestUpdateEnvironmentAPI(t *testing.T) {
+	_, router := setupAPITest(t)
+
+	// Create environment
+	createReq := models.CreateEnvironmentRequest{
+		Name:  "patch-me",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+	}
+	body, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code)
+
+	var created models.Environment
+	err := json.NewDecoder(rr.Body).Decode(&created)
+	require.NoError(t, err)
+
+	t.Run("PATCH updates name and image", func(t *testing.T) {
+		newName := "patched-name"
+		newImage := "node:18"
+		patch := models.UpdateEnvironmentRequest{
+			Name:  &newName,
+			Image: &newImage,
+		}
+		patchBody, _ := json.Marshal(patch)
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/environments/"+created.ID, bytes.NewReader(patchBody))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var env models.Environment
+		err := json.NewDecoder(rr.Body).Decode(&env)
+		require.NoError(t, err)
+		assert.Equal(t, "patched-name", env.Name)
+		assert.Equal(t, "node:18", env.Image)
+	})
+
+	t.Run("PATCH non-existent returns 404", func(t *testing.T) {
+		name := "x"
+		patch := models.UpdateEnvironmentRequest{Name: &name}
+		patchBody, _ := json.Marshal(patch)
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/environments/non-existent", bytes.NewReader(patchBody))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("PATCH empty body is valid (no-op)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/environments/"+created.ID, bytes.NewReader([]byte("{}")))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+}
+
+func TestRetryReconciliationAPI(t *testing.T) {
+	_, router := setupAPITest(t)
+
+	// Create environment
+	createReq := models.CreateEnvironmentRequest{
+		Name:  "retry-me",
+		Image: "python:3.11-slim",
+		Resources: models.ResourceSpec{
+			CPU:     "500m",
+			Memory:  "512Mi",
+			Storage: "1Gi",
+		},
+	}
+	body, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code)
+
+	var created models.Environment
+	err := json.NewDecoder(rr.Body).Decode(&created)
+	require.NoError(t, err)
+
+	t.Run("POST retry returns 202", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments/"+created.ID+"/retry", nil)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusAccepted, rr.Code)
+		var resp map[string]string
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		assert.Equal(t, "retry_triggered", resp["status"])
+	})
+
+	t.Run("POST retry non-existent returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/environments/non-existent/retry", nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		assert.Equal(t, http.StatusNotFound, rr.Code)
 	})
 }
 

@@ -31,3 +31,8 @@ pool:
   default_image: "python:3.11-slim"
   default_cpu: "500m"
   default_memory: "512Mi"
+
+# Reconciliation loop: keeps environments and pods in sync, retries failed provisioning
+reconciliation:
+  interval_seconds: 60   # How often to run reconciliation (min 10s)
+  max_retries: 5        # Max attempts for pending/failed envs before "Retry" button is needed

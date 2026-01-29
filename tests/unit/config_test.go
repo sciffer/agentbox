@@ -29,6 +29,8 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, "1Gi", cfg.Resources.DefaultMemoryLimit)
 		assert.Equal(t, 3600, cfg.Timeouts.DefaultTimeout)
 		assert.Equal(t, 86400, cfg.Timeouts.MaxTimeout)
+		assert.Equal(t, 60, cfg.Reconciliation.IntervalSeconds)
+		assert.Equal(t, 5, cfg.Reconciliation.MaxRetries)
 	})
 
 	t.Run("override with environment variables", func(t *testing.T) {
@@ -69,6 +71,35 @@ func TestLoadConfig(t *testing.T) {
 		_, err := config.Load("")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "auth secret is required")
+	})
+
+	t.Run("reconciliation overrides from env", func(t *testing.T) {
+		os.Setenv("AGENTBOX_AUTH_ENABLED", "false")
+		os.Setenv("AGENTBOX_RECONCILIATION_INTERVAL_SECONDS", "120")
+		os.Setenv("AGENTBOX_RECONCILIATION_MAX_RETRIES", "10")
+		defer func() {
+			os.Unsetenv("AGENTBOX_AUTH_ENABLED")
+			os.Unsetenv("AGENTBOX_RECONCILIATION_INTERVAL_SECONDS")
+			os.Unsetenv("AGENTBOX_RECONCILIATION_MAX_RETRIES")
+		}()
+
+		cfg, err := config.Load("")
+		require.NoError(t, err)
+		assert.Equal(t, 120, cfg.Reconciliation.IntervalSeconds)
+		assert.Equal(t, 10, cfg.Reconciliation.MaxRetries)
+	})
+
+	t.Run("validation error - reconciliation interval too low", func(t *testing.T) {
+		os.Setenv("AGENTBOX_AUTH_ENABLED", "false")
+		os.Setenv("AGENTBOX_RECONCILIATION_INTERVAL_SECONDS", "5")
+		defer func() {
+			os.Unsetenv("AGENTBOX_AUTH_ENABLED")
+			os.Unsetenv("AGENTBOX_RECONCILIATION_INTERVAL_SECONDS")
+		}()
+
+		_, err := config.Load("")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "reconciliation interval")
 	})
 
 	t.Run("validation error - max timeout less than default", func(t *testing.T) {
@@ -133,4 +164,49 @@ timeouts:
 	assert.Equal(t, "2Gi", cfg.Resources.DefaultMemoryLimit)
 	assert.Equal(t, 7200, cfg.Timeouts.DefaultTimeout)
 	assert.Equal(t, 14400, cfg.Timeouts.MaxTimeout)
+}
+
+func TestConfigReconciliationFromYAML(t *testing.T) {
+	yamlContent := `
+server:
+  port: 8080
+auth:
+  enabled: false
+reconciliation:
+  interval_seconds: 30
+  max_retries: 3
+`
+	tmpfile, err := os.CreateTemp("", "config-recon-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+	_, err = tmpfile.Write([]byte(yamlContent))
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	cfg, err := config.Load(tmpfile.Name())
+	require.NoError(t, err)
+	assert.Equal(t, 30, cfg.Reconciliation.IntervalSeconds)
+	assert.Equal(t, 3, cfg.Reconciliation.MaxRetries)
+}
+
+func TestConfigReconciliationValidationNegativeRetries(t *testing.T) {
+	yamlContent := `
+server:
+  port: 8080
+auth:
+  enabled: false
+reconciliation:
+  interval_seconds: 60
+  max_retries: -1
+`
+	tmpfile, err := os.CreateTemp("", "config-recon-neg-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+	_, err = tmpfile.Write([]byte(yamlContent))
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	_, err = config.Load(tmpfile.Name())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "max_retries")
 }

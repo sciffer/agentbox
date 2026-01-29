@@ -90,6 +90,22 @@ type Environment struct {
 	Tolerations  []Toleration      `json:"tolerations,omitempty"`
 	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
 	Pool         *PoolConfig       `json:"pool,omitempty"`
+
+	// Reconciliation retry tracking (for pending/failed environments)
+	ReconciliationRetryCount  int        `json:"reconciliation_retry_count,omitempty"`
+	LastReconciliationError   string     `json:"last_reconciliation_error,omitempty"`
+	LastReconciliationAt      *time.Time `json:"last_reconciliation_at,omitempty"`
+	ReconciliationRetriesLeft int        `json:"reconciliation_retries_left,omitempty"` // Computed: max_retries - retry_count (for UI)
+}
+
+// EnvironmentEvent is a reconciliation or lifecycle event shown in environment logs
+type EnvironmentEvent struct {
+	ID            string    `json:"id"`
+	EnvironmentID string    `json:"environment_id"`
+	EventType     string    `json:"event_type"` // e.g. "reconciliation_start", "reconciliation_success", "reconciliation_failure", "provisioning"
+	Message       string    `json:"message"`
+	Details       string    `json:"details,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // ResourceSpec defines resource limits and requests
@@ -118,6 +134,21 @@ type CreateEnvironmentRequest struct {
 	Tolerations  []Toleration      `json:"tolerations,omitempty"`
 	Isolation    *IsolationConfig  `json:"isolation,omitempty"`
 	Pool         *PoolConfig       `json:"pool,omitempty"`
+}
+
+// UpdateEnvironmentRequest is the request body for PATCH /environments/{id} (optional fields only)
+type UpdateEnvironmentRequest struct {
+	Name         *string            `json:"name,omitempty"`
+	Image        *string            `json:"image,omitempty"`
+	Resources    *ResourceSpec      `json:"resources,omitempty"`
+	Timeout      *int               `json:"timeout,omitempty"`
+	Env          *map[string]string `json:"env,omitempty"`
+	Command      *[]string          `json:"command,omitempty"`
+	Labels       *map[string]string `json:"labels,omitempty"`
+	NodeSelector *map[string]string `json:"node_selector,omitempty"`
+	Tolerations  *[]Toleration      `json:"tolerations,omitempty"`
+	Isolation    *IsolationConfig   `json:"isolation,omitempty"`
+	Pool         *PoolConfig        `json:"pool,omitempty"`
 }
 
 // ExecRequest is the request body for executing a command in an existing environment

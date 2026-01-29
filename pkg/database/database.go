@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -107,12 +108,19 @@ func (db *DB) Migrate() error {
 
 	db.logger.Info("current schema version", zap.Int("version", currentVersion))
 
-	// Run migrations
+	// Run migrations in version order (map iteration order is random)
 	migrations := getMigrations()
-	for version, migration := range migrations {
+	versions := make([]int, 0, len(migrations))
+	for v := range migrations {
+		versions = append(versions, v)
+	}
+	sort.Ints(versions)
+
+	for _, version := range versions {
 		if version <= currentVersion {
 			continue
 		}
+		migration := migrations[version]
 
 		db.logger.Info("applying migration", zap.Int("version", version))
 
@@ -139,8 +147,32 @@ func getMigrations() map[int]string {
 		1: initialSchema,
 		2: apiKeyPermissionsSchema,
 		3: environmentsAndExecutionsSchema,
+		4: reconciliationSchema,
 	}
 }
+
+// reconciliationSchema adds environment_events table and reconciliation fields to environments
+const reconciliationSchema = `
+-- Environment events (reconciliation and lifecycle logs for display in environment logs tab)
+CREATE TABLE IF NOT EXISTS environment_events (
+    id TEXT PRIMARY KEY,
+    environment_id TEXT NOT NULL,
+    event_type VARCHAR(50) NOT NULL,
+    message TEXT NOT NULL,
+    details TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_environment_events_env_id ON environment_events(environment_id);
+CREATE INDEX IF NOT EXISTS idx_environment_events_created_at ON environment_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_environment_events_env_created ON environment_events(environment_id, created_at);
+
+-- Reconciliation retry tracking on environments (SQLite: one ADD COLUMN per statement)
+ALTER TABLE environments ADD COLUMN reconciliation_retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE environments ADD COLUMN last_reconciliation_error TEXT;
+ALTER TABLE environments ADD COLUMN last_reconciliation_at TIMESTAMP;
+`
 
 // apiKeyPermissionsSchema adds API key permissions table
 const apiKeyPermissionsSchema = `

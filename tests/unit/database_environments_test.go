@@ -210,3 +210,76 @@ func TestDatabaseLoadAllEnvironments(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(all), 1)
 }
+
+func TestDatabaseSaveAndListEnvironmentEvents(t *testing.T) {
+	db := setupDBForEnvironments(t)
+	ctx := context.Background()
+
+	// Save an environment so we can reference it
+	env := &models.Environment{
+		ID:        "env-events",
+		Name:      "events-test",
+		Status:    models.StatusRunning,
+		Image:     "busybox",
+		CreatedAt: time.Now().UTC().Truncate(time.Millisecond),
+		Namespace: "ns-events",
+		Resources: models.ResourceSpec{CPU: "100m", Memory: "128Mi", Storage: "1Gi"},
+	}
+	err := db.SaveEnvironment(ctx, env)
+	require.NoError(t, err)
+
+	e1, err := db.SaveEnvironmentEvent(ctx, "env-events", "reconciliation_start", "Reconciliation attempt started", "attempt 1 of 5")
+	require.NoError(t, err)
+	assert.NotEmpty(t, e1.ID)
+	assert.Equal(t, "env-events", e1.EnvironmentID)
+	assert.Equal(t, "reconciliation_start", e1.EventType)
+	assert.Equal(t, "Reconciliation attempt started", e1.Message)
+	assert.Equal(t, "attempt 1 of 5", e1.Details)
+	assert.False(t, e1.CreatedAt.IsZero())
+
+	_, err = db.SaveEnvironmentEvent(ctx, "env-events", "reconciliation_success", "Environment provisioned successfully", "")
+	require.NoError(t, err)
+
+	events, err := db.ListEnvironmentEvents(ctx, "env-events", 10)
+	require.NoError(t, err)
+	assert.Len(t, events, 2)
+	assert.Equal(t, "reconciliation_start", events[0].EventType)
+	assert.Equal(t, "reconciliation_success", events[1].EventType)
+}
+
+func TestDatabaseListEnvironmentEventsEmpty(t *testing.T) {
+	db := setupDBForEnvironments(t)
+	ctx := context.Background()
+
+	events, err := db.ListEnvironmentEvents(ctx, "non-existent-env", 10)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+}
+
+func TestDatabaseUpdateEnvironmentReconciliationState(t *testing.T) {
+	db := setupDBForEnvironments(t)
+	ctx := context.Background()
+
+	env := &models.Environment{
+		ID:        "env-recon",
+		Name:      "recon-state",
+		Status:    models.StatusFailed,
+		Image:     "busybox",
+		CreatedAt: time.Now().UTC().Truncate(time.Millisecond),
+		Namespace: "ns-recon",
+		Resources: models.ResourceSpec{CPU: "100m", Memory: "128Mi", Storage: "1Gi"},
+	}
+	err := db.SaveEnvironment(ctx, env)
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	err = db.UpdateEnvironmentReconciliationState(ctx, "env-recon", 2, "pod failed to start", &now)
+	require.NoError(t, err)
+
+	got, err := db.GetEnvironment(ctx, "env-recon")
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.ReconciliationRetryCount)
+	assert.Equal(t, "pod failed to start", got.LastReconciliationError)
+	require.NotNil(t, got.LastReconciliationAt)
+	assert.True(t, got.LastReconciliationAt.Equal(now) || got.LastReconciliationAt.Before(now.Add(time.Second)))
+}

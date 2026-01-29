@@ -237,6 +237,68 @@ curl -X GET https://your-server/api/v1/environments/env-abc123 \
 }
 ```
 
+Environment responses may also include reconciliation fields when the environment is pending or failed:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `reconciliation_retry_count` | int | Number of reconciliation attempts so far (default: 0) |
+| `last_reconciliation_error` | string | Last error message from reconciliation (if any) |
+| `last_reconciliation_at` | string | Timestamp of last reconciliation attempt |
+| `reconciliation_retries_left` | int | Remaining retries before manual retry is needed (computed from `max_retries - retry_count`) |
+
+### Update an Environment (PATCH)
+
+Update environment settings after creation. Only super admins, environment admins (editor), and environment owners can update. All request body fields are optional; only provided fields are updated.
+
+```bash
+curl -X PATCH "https://your-server/api/v1/environments/env-abc123" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "updated-name",
+    "image": "python:3.12-slim",
+    "resources": { "cpu": "1000m", "memory": "1Gi", "storage": "2Gi" },
+    "timeout": 7200,
+    "env": { "KEY": "value" },
+    "labels": { "team": "backend" }
+  }'
+```
+
+**Request Body (all optional):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Environment name |
+| `image` | string | Container image |
+| `resources` | object | `cpu`, `memory`, `storage` |
+| `timeout` | int | Lifetime in seconds |
+| `env` | object | Environment variables |
+| `command` | array | Override command |
+| `labels` | object | Labels |
+| `node_selector` | object | Kubernetes node selector |
+| `tolerations` | array | Kubernetes tolerations |
+| `isolation` | object | Isolation config (see Create) |
+| `pool` | object | Standby pool config |
+
+**Response:** `200 OK` with the updated environment object.
+
+### Retry Reconciliation
+
+When an environment is stuck in **pending** or **failed** after the configured max retries, use this endpoint to reset the retry count and trigger one reconciliation attempt (e.g. for a "Retry" button in the UI). Requires the same permissions as PATCH (editor or above).
+
+```bash
+curl -X POST "https://your-server/api/v1/environments/env-abc123/retry" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Response:** `202 Accepted`
+
+```json
+{
+  "status": "retry_triggered"
+}
+```
+
 ### Delete an Environment
 
 ```bash
@@ -251,6 +313,24 @@ curl -X DELETE "https://your-server/api/v1/environments/env-abc123?force=false" 
 | `force` | boolean | Force delete even if environment is not gracefully stopping |
 
 **Response:** `204 No Content`
+
+---
+
+## Reconciliation and environment logs
+
+AgentBox runs a **reconciliation loop** that:
+
+- Retries provisioning for **pending** or **failed** environments (up to a configurable `max_retries`, default: 5).
+- Ensures **running** environments have their main pod; recreates it if missing.
+
+Reconciliation events (start, success, failure, max retries exceeded, manual retry) are stored and **included in the environment logs**. When you call `GET /environments/{id}/logs`, the response merges pod logs with these events (sorted by time). Events use `stream: "reconciliation"` and a message prefixed with the event type.
+
+**Configuration (defaults):**
+
+| Setting | Config / env | Default | Description |
+|---------|----------------|--------|-------------|
+| Interval | `reconciliation.interval_seconds` / `AGENTBOX_RECONCILIATION_INTERVAL_SECONDS` | 60 | Seconds between reconciliation runs (min 10) |
+| Max retries | `reconciliation.max_retries` / `AGENTBOX_RECONCILIATION_MAX_RETRIES` | 5 | Max automatic retries before user must use "Retry" |
 
 ---
 
