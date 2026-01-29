@@ -72,18 +72,18 @@ const (
 // New creates a new orchestrator instance
 func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, db *database.DB) *Orchestrator {
 	o := &Orchestrator{
-		k8sClient:       k8sClient,
-		config:          cfg,
-		logger:          log,
-		db:              db,
-		environments:    make(map[string]*models.Environment),
-		namespacePrefix: cfg.Kubernetes.NamespacePrefix,
-		provisionSem:    make(chan struct{}, MaxConcurrentProvisions),
-		execSem:         make(chan struct{}, MaxConcurrentExecutions),
-		executions:      make(map[string]*models.Execution),
+		k8sClient:              k8sClient,
+		config:                 cfg,
+		logger:                 log,
+		db:                     db,
+		environments:           make(map[string]*models.Environment),
+		namespacePrefix:        cfg.Kubernetes.NamespacePrefix,
+		provisionSem:           make(chan struct{}, MaxConcurrentProvisions),
+		execSem:                make(chan struct{}, MaxConcurrentExecutions),
+		executions:             make(map[string]*models.Execution),
 		standbyPool:            make(map[string][]*StandbyPod),
 		poolStopChan:           make(chan struct{}),
-		reconciliationStopChan:  make(chan struct{}),
+		reconciliationStopChan: make(chan struct{}),
 	}
 
 	// Load environments and executions from database on startup

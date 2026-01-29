@@ -92,10 +92,10 @@ type Environment struct {
 	Pool         *PoolConfig       `json:"pool,omitempty"`
 
 	// Reconciliation retry tracking (for pending/failed environments)
-	ReconciliationRetryCount   int        `json:"reconciliation_retry_count,omitempty"`
-	LastReconciliationError    string     `json:"last_reconciliation_error,omitempty"`
+	ReconciliationRetryCount  int        `json:"reconciliation_retry_count,omitempty"`
+	LastReconciliationError   string     `json:"last_reconciliation_error,omitempty"`
 	LastReconciliationAt      *time.Time `json:"last_reconciliation_at,omitempty"`
-	ReconciliationRetriesLeft int       `json:"reconciliation_retries_left,omitempty"` // Computed: max_retries - retry_count (for UI)
+	ReconciliationRetriesLeft int        `json:"reconciliation_retries_left,omitempty"` // Computed: max_retries - retry_count (for UI)
 }
 
 // EnvironmentEvent is a reconciliation or lifecycle event shown in environment logs
