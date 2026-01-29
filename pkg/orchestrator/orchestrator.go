@@ -51,6 +51,8 @@ type Orchestrator struct {
 	standbyPoolMutex sync.Mutex
 	// poolStopChan signals the pool replenishment goroutine to stop
 	poolStopChan chan struct{}
+	// reconciliationStopChan signals the reconciliation loop to stop
+	reconciliationStopChan chan struct{}
 }
 
 // MaxConcurrentProvisions is the maximum number of environments that can be
@@ -79,8 +81,9 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, 
 		provisionSem:    make(chan struct{}, MaxConcurrentProvisions),
 		execSem:         make(chan struct{}, MaxConcurrentExecutions),
 		executions:      make(map[string]*models.Execution),
-		standbyPool:     make(map[string][]*StandbyPod),
-		poolStopChan:    make(chan struct{}),
+		standbyPool:            make(map[string][]*StandbyPod),
+		poolStopChan:           make(chan struct{}),
+		reconciliationStopChan:  make(chan struct{}),
 	}
 
 	// Load environments and executions from database on startup
@@ -96,12 +99,16 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, 
 		go o.runPoolReplenishment()
 	}
 
+	// Start reconciliation loop (handles pending/failed envs and missing pods)
+	go o.runReconciliationLoop()
+
 	return o
 }
 
 // Stop gracefully shuts down the orchestrator
 func (o *Orchestrator) Stop() {
 	close(o.poolStopChan)
+	close(o.reconciliationStopChan)
 }
 
 // loadFromDatabase loads all environments and executions from the database
@@ -427,6 +434,16 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 		// If pod doesn't exist, keep the stored status (don't change to pending)
 	}
 
+	// Computed field for UI: retries left (for "Retry" button visibility)
+	maxRetries := o.config.Reconciliation.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	envCopy.ReconciliationRetriesLeft = maxRetries - envCopy.ReconciliationRetryCount
+	if envCopy.ReconciliationRetriesLeft < 0 {
+		envCopy.ReconciliationRetriesLeft = 0
+	}
+
 	return &envCopy, nil
 }
 
@@ -489,6 +506,17 @@ func (o *Orchestrator) ListEnvironments(
 	}
 
 	pagedEnvs := envs[start:end]
+	maxRetries := o.config.Reconciliation.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	for i := range pagedEnvs {
+		left := maxRetries - pagedEnvs[i].ReconciliationRetryCount
+		if left < 0 {
+			left = 0
+		}
+		pagedEnvs[i].ReconciliationRetriesLeft = left
+	}
 
 	return &models.ListEnvironmentsResponse{
 		Environments: pagedEnvs,
@@ -496,6 +524,61 @@ func (o *Orchestrator) ListEnvironments(
 		Limit:        limit,
 		Offset:       offset,
 	}, nil
+}
+
+// UpdateEnvironment applies a partial update to an environment (PATCH); only non-nil fields are updated
+func (o *Orchestrator) UpdateEnvironment(ctx context.Context, envID string, patch *models.UpdateEnvironmentRequest) (*models.Environment, error) {
+	o.envMutex.Lock()
+	env, exists := o.environments[envID]
+	if !exists {
+		o.envMutex.Unlock()
+		return nil, fmt.Errorf("environment not found")
+	}
+	// Apply patch
+	if patch.Name != nil {
+		env.Name = *patch.Name
+	}
+	if patch.Image != nil {
+		env.Image = *patch.Image
+	}
+	if patch.Resources != nil {
+		env.Resources = *patch.Resources
+	}
+	if patch.Timeout != nil {
+		env.Timeout = *patch.Timeout
+	}
+	if patch.Env != nil {
+		env.Env = *patch.Env
+	}
+	if patch.Command != nil {
+		env.Command = *patch.Command
+	}
+	if patch.Labels != nil {
+		env.Labels = *patch.Labels
+	}
+	if patch.NodeSelector != nil {
+		env.NodeSelector = *patch.NodeSelector
+	}
+	if patch.Tolerations != nil {
+		env.Tolerations = *patch.Tolerations
+	}
+	if patch.Isolation != nil {
+		env.Isolation = patch.Isolation
+	}
+	if patch.Pool != nil {
+		env.Pool = patch.Pool
+	}
+	o.envMutex.Unlock()
+
+	if o.db != nil {
+		if err := o.db.SaveEnvironment(ctx, env); err != nil {
+			o.logger.Error("failed to save updated environment to database", zap.Error(err), zap.String("environment_id", envID))
+			return nil, fmt.Errorf("failed to persist update: %w", err)
+		}
+	}
+
+	envCopy := *env
+	return &envCopy, nil
 }
 
 // DeleteEnvironment terminates and removes an environment
@@ -588,34 +671,54 @@ func (o *Orchestrator) ExecuteCommand(ctx context.Context, envID string, command
 	}, nil
 }
 
-// GetLogs retrieves logs from an environment
+// GetLogs retrieves logs from an environment (pod logs merged with reconciliation events for the logs tab)
 func (o *Orchestrator) GetLogs(ctx context.Context, envID string, tailLines *int64) (*models.LogsResponse, error) {
 	env, err := o.GetEnvironment(ctx, envID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get logs from the pod
-	logsStr, err := o.k8sClient.GetPodLogs(ctx, env.Namespace, "main", tailLines)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pod logs: %w", err)
-	}
+	var logs []models.LogEntry
 
-	// Parse logs into LogEntry format
-	// Optimize: Pre-allocate slice with estimated capacity
-	lines := strings.Split(logsStr, "\n")
-	logs := make([]models.LogEntry, 0, len(lines))
-
-	now := time.Now()
-	for _, line := range lines {
-		if line != "" {
-			logs = append(logs, models.LogEntry{
-				Timestamp: now, // Use single timestamp for batch
-				Stream:    "stdout",
-				Message:   line,
-			})
+	// Fetch reconciliation/lifecycle events for this environment
+	if o.db != nil {
+		events, errEvents := o.db.ListEnvironmentEvents(ctx, envID, 500)
+		if errEvents == nil {
+			for _, e := range events {
+				msg := e.Message
+				if e.Details != "" {
+					msg = msg + " — " + e.Details
+				}
+				logs = append(logs, models.LogEntry{
+					Timestamp: e.CreatedAt,
+					Stream:    "reconciliation",
+					Message:   "[" + e.EventType + "] " + msg,
+				})
+			}
 		}
 	}
+
+	// Get logs from the pod (if it exists)
+	podLogsStr, err := o.k8sClient.GetPodLogs(ctx, env.Namespace, "main", tailLines)
+	if err == nil {
+		lines := strings.Split(podLogsStr, "\n")
+		now := time.Now()
+		for _, line := range lines {
+			if line != "" {
+				logs = append(logs, models.LogEntry{
+					Timestamp: now,
+					Stream:    "stdout",
+					Message:   line,
+				})
+			}
+		}
+	}
+	// If pod doesn't exist (e.g. pending/failed), we still return reconciliation events
+
+	// Sort by timestamp so reconciliation events appear in order with pod logs
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].Timestamp.Before(logs[j].Timestamp)
+	})
 
 	return &models.LogsResponse{
 		Logs: logs,
@@ -1595,4 +1698,285 @@ func (o *Orchestrator) GetPoolStatus() map[string]int {
 		status[envID] = len(pods)
 	}
 	return status
+}
+
+// ========== Reconciliation Loop ==========
+
+// runReconciliationLoop runs periodically to reconcile pending/failed environments and restore missing pods
+func (o *Orchestrator) runReconciliationLoop() {
+	interval := time.Duration(o.config.Reconciliation.IntervalSeconds) * time.Second
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	o.logger.Info("reconciliation loop started",
+		zap.Duration("interval", interval),
+		zap.Int("max_retries", o.config.Reconciliation.MaxRetries),
+	)
+
+	for {
+		select {
+		case <-o.reconciliationStopChan:
+			o.logger.Info("reconciliation loop stopped")
+			return
+		case <-ticker.C:
+			o.reconcileAll()
+		}
+	}
+}
+
+// reconcileAll iterates over environments and reconciles those that need it
+func (o *Orchestrator) reconcileAll() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	o.envMutex.RLock()
+	envList := make([]*models.Environment, 0, len(o.environments))
+	for _, env := range o.environments {
+		if env.Status == models.StatusTerminating || env.Status == models.StatusTerminated {
+			continue
+		}
+		envCopy := *env
+		envList = append(envList, &envCopy)
+	}
+	o.envMutex.RUnlock()
+
+	maxRetries := o.config.Reconciliation.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+
+	for _, env := range envList {
+		// Pending or Failed: retry provisioning if retries left
+		if env.Status == models.StatusPending || env.Status == models.StatusFailed {
+			if env.ReconciliationRetryCount >= maxRetries {
+				continue // Already exceeded retries; user can use "Retry" button to reset
+			}
+			o.reconcilePendingOrFailed(ctx, env)
+			continue
+		}
+
+		// Running: ensure main pod exists
+		if env.Status == models.StatusRunning {
+			o.reconcileRunning(ctx, env)
+		}
+	}
+}
+
+// reconcilePendingOrFailed retries provisioning for a pending or failed environment
+func (o *Orchestrator) reconcilePendingOrFailed(ctx context.Context, env *models.Environment) {
+	envID := env.ID
+	envNamespace := env.Namespace
+	maxRetries := o.config.Reconciliation.MaxRetries
+	retryCount := env.ReconciliationRetryCount
+
+	o.logReconciliationEvent(envID, "reconciliation_start", "Reconciliation attempt started", fmt.Sprintf("attempt %d of %d", retryCount+1, maxRetries))
+
+	// Delete main pod if it exists (e.g. stuck Pending/Failed) so provisionEnvironment can recreate
+	_ = o.k8sClient.DeletePod(ctx, envNamespace, "main", true)
+
+	// Re-acquire env from map for latest spec
+	o.envMutex.RLock()
+	envToProvision, exists := o.environments[envID]
+	o.envMutex.RUnlock()
+	if !exists {
+		return
+	}
+
+	provisionCtx, cancel := context.WithTimeout(context.Background(), time.Duration(o.config.Timeouts.StartupTimeout)*time.Second)
+	defer cancel()
+
+	// Try provisioning (reuses existing namespace/quota/network if present)
+	if err := o.provisionEnvironment(provisionCtx, envToProvision); err != nil {
+		now := time.Now()
+		newCount := envToProvision.ReconciliationRetryCount + 1
+		errMsg := err.Error()
+
+		o.envMutex.Lock()
+		if e, ok := o.environments[envID]; ok {
+			e.ReconciliationRetryCount = newCount
+			e.LastReconciliationError = errMsg
+			e.LastReconciliationAt = &now
+		}
+		o.envMutex.Unlock()
+
+		if o.db != nil {
+			_ = o.db.UpdateEnvironmentReconciliationState(ctx, envID, newCount, errMsg, &now)
+		}
+
+		o.logReconciliationEvent(envID, "reconciliation_failure", "Reconciliation failed", errMsg)
+
+		if newCount >= maxRetries {
+			o.updateEnvironmentStatus(envID, models.StatusFailed)
+			o.logReconciliationEvent(envID, "reconciliation_max_retries", "Max reconciliation retries exceeded; use Retry button to try again", fmt.Sprintf("attempts: %d", newCount))
+		}
+		return
+	}
+
+	// Success: reset retry state
+	o.envMutex.Lock()
+	if e, ok := o.environments[envID]; ok {
+		e.ReconciliationRetryCount = 0
+		e.LastReconciliationError = ""
+		e.LastReconciliationAt = nil
+	}
+	o.envMutex.Unlock()
+
+	if o.db != nil {
+		_ = o.db.UpdateEnvironmentReconciliationState(ctx, envID, 0, "", nil)
+	}
+
+	o.logReconciliationEvent(envID, "reconciliation_success", "Environment provisioned successfully", "")
+}
+
+// reconcileRunning ensures the main pod exists for a running environment; recreates if missing
+func (o *Orchestrator) reconcileRunning(ctx context.Context, env *models.Environment) {
+	_, err := o.k8sClient.GetPod(ctx, env.Namespace, "main")
+	if err == nil {
+		return // Pod exists
+	}
+
+	o.logReconciliationEvent(env.ID, "reconciliation_pod_missing", "Main pod not found; recreating", "")
+
+	o.envMutex.RLock()
+	envCurrent, exists := o.environments[env.ID]
+	o.envMutex.RUnlock()
+	if !exists {
+		return
+	}
+
+	if err := o.ensureMainPod(ctx, envCurrent); err != nil {
+		o.logReconciliationEvent(env.ID, "reconciliation_failure", "Failed to recreate main pod", err.Error())
+		return
+	}
+
+	o.logReconciliationEvent(env.ID, "reconciliation_success", "Main pod recreated successfully", "")
+}
+
+// ensureMainPod creates the main pod in an existing namespace and waits for running (used when pod is missing)
+func (o *Orchestrator) ensureMainPod(ctx context.Context, env *models.Environment) error {
+	envNamespace := env.Namespace
+	envImage := env.Image
+	envCommand := env.Command
+	if len(envCommand) == 0 {
+		envCommand = []string{"/bin/sh", "-c", "sleep infinity"}
+	}
+	envResources := env.Resources
+	envEnvVars := env.Env
+	envLabels := env.Labels
+	envNodeSelector := env.NodeSelector
+	envTolerations := env.Tolerations
+	envIsolation := env.Isolation
+
+	labels := map[string]string{"app": "agentbox", "env-id": env.ID, "managed-by": "agentbox"}
+	for k, v := range envLabels {
+		labels[k] = v
+	}
+
+	var k8sTolerations []k8s.Toleration
+	for _, t := range envTolerations {
+		k8sTolerations = append(k8sTolerations, k8s.Toleration{
+			Key:               t.Key,
+			Operator:          t.Operator,
+			Value:             t.Value,
+			Effect:            t.Effect,
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+
+	runtimeClass := o.config.Kubernetes.RuntimeClass
+	if envIsolation != nil && envIsolation.RuntimeClass != "" {
+		runtimeClass = envIsolation.RuntimeClass
+	}
+	var securityContext *k8s.SecurityContext
+	if envIsolation != nil && envIsolation.SecurityContext != nil {
+		securityContext = &k8s.SecurityContext{
+			RunAsUser:                envIsolation.SecurityContext.RunAsUser,
+			RunAsGroup:               envIsolation.SecurityContext.RunAsGroup,
+			RunAsNonRoot:             envIsolation.SecurityContext.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   envIsolation.SecurityContext.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: envIsolation.SecurityContext.AllowPrivilegeEscalation,
+		}
+	}
+
+	podSpec := &k8s.PodSpec{
+		Name:            "main",
+		Namespace:       envNamespace,
+		Image:           envImage,
+		Command:         envCommand,
+		Env:             envEnvVars,
+		CPU:             envResources.CPU,
+		Memory:          envResources.Memory,
+		Storage:         envResources.Storage,
+		RuntimeClass:    runtimeClass,
+		Labels:          labels,
+		NodeSelector:    envNodeSelector,
+		Tolerations:     k8sTolerations,
+		SecurityContext: securityContext,
+	}
+
+	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
+		return fmt.Errorf("create pod: %w", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(o.config.Timeouts.StartupTimeout)*time.Second)
+	defer cancel()
+
+	if err := o.k8sClient.WaitForPodRunning(waitCtx, envNamespace, "main"); err != nil {
+		return fmt.Errorf("pod failed to start: %w", err)
+	}
+
+	return nil
+}
+
+// logReconciliationEvent persists a reconciliation event to the DB for display in environment logs
+func (o *Orchestrator) logReconciliationEvent(envID, eventType, message, details string) {
+	if o.db == nil {
+		return
+	}
+	ctx := context.Background()
+	if _, err := o.db.SaveEnvironmentEvent(ctx, envID, eventType, message, details); err != nil {
+		o.logger.Warn("failed to save reconciliation event", zap.String("environment_id", envID), zap.Error(err))
+	}
+}
+
+// RetryReconciliation resets retry count and triggers one reconciliation attempt (for "Retry" button)
+func (o *Orchestrator) RetryReconciliation(ctx context.Context, envID string) error {
+	o.envMutex.Lock()
+	env, exists := o.environments[envID]
+	if !exists {
+		o.envMutex.Unlock()
+		return fmt.Errorf("environment not found")
+	}
+	env.ReconciliationRetryCount = 0
+	env.LastReconciliationError = ""
+	env.LastReconciliationAt = nil
+	o.envMutex.Unlock()
+
+	if o.db != nil {
+		if err := o.db.UpdateEnvironmentReconciliationState(ctx, envID, 0, "", nil); err != nil {
+			o.logger.Error("failed to reset reconciliation state in database", zap.Error(err), zap.String("environment_id", envID))
+		}
+	}
+
+	o.logReconciliationEvent(envID, "reconciliation_retry", "Manual retry requested", "")
+
+	// Trigger one reconciliation attempt in background
+	go func() {
+		rctx, cancel := context.WithTimeout(context.Background(), time.Duration(o.config.Timeouts.StartupTimeout)*time.Second)
+		defer cancel()
+		o.envMutex.RLock()
+		envForReconcile, ok := o.environments[envID]
+		if !ok {
+			o.envMutex.RUnlock()
+			return
+		}
+		envCopy := *envForReconcile
+		o.envMutex.RUnlock()
+		o.reconcilePendingOrFailed(rctx, &envCopy)
+	}()
+
+	return nil
 }

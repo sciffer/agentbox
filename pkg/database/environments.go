@@ -12,6 +12,13 @@ import (
 	"github.com/sciffer/agentbox/pkg/models"
 )
 
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // SaveEnvironment saves an environment to the database
 func (db *DB) SaveEnvironment(ctx context.Context, env *models.Environment) error {
 	// Serialize optional fields to JSON
@@ -48,12 +55,16 @@ func (db *DB) SaveEnvironment(ctx context.Context, env *models.Environment) erro
 		INSERT INTO environments (
 			id, name, status, image, created_at, started_at, user_id, namespace, endpoint,
 			timeout, resources_cpu, resources_memory, resources_storage,
-			env_vars, command, labels, node_selector, tolerations, isolation_config, pool_config
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+			env_vars, command, labels, node_selector, tolerations, isolation_config, pool_config,
+			reconciliation_retry_count, last_reconciliation_error, last_reconciliation_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			started_at = EXCLUDED.started_at,
-			endpoint = EXCLUDED.endpoint
+			endpoint = EXCLUDED.endpoint,
+			reconciliation_retry_count = EXCLUDED.reconciliation_retry_count,
+			last_reconciliation_error = EXCLUDED.last_reconciliation_error,
+			last_reconciliation_at = EXCLUDED.last_reconciliation_at
 	`
 
 	_, err = db.ExecContext(ctx, query,
@@ -62,6 +73,7 @@ func (db *DB) SaveEnvironment(ctx context.Context, env *models.Environment) erro
 		env.Resources.CPU, env.Resources.Memory, env.Resources.Storage,
 		string(envVarsJSON), string(commandJSON), string(labelsJSON),
 		string(nodeSelectorJSON), string(tolerationsJSON), string(isolationJSON), string(poolJSON),
+		env.ReconciliationRetryCount, nullIfEmpty(env.LastReconciliationError), env.LastReconciliationAt,
 	)
 
 	if err != nil {
@@ -76,11 +88,14 @@ func (db *DB) GetEnvironment(ctx context.Context, id string) (*models.Environmen
 	var env models.Environment
 	var statusStr string
 	var envVarsJSON, commandJSON, labelsJSON, nodeSelectorJSON, tolerationsJSON, isolationJSON, poolJSON sql.NullString
+	var lastReconciliationError sql.NullString
+	var lastReconciliationAt sql.NullTime
 
 	query := `
 		SELECT id, name, status, image, created_at, started_at, user_id, namespace, endpoint,
 			timeout, resources_cpu, resources_memory, resources_storage,
-			env_vars, command, labels, node_selector, tolerations, isolation_config, pool_config
+			env_vars, command, labels, node_selector, tolerations, isolation_config, pool_config,
+			COALESCE(reconciliation_retry_count, 0), last_reconciliation_error, last_reconciliation_at
 		FROM environments
 		WHERE id = $1
 	`
@@ -90,6 +105,7 @@ func (db *DB) GetEnvironment(ctx context.Context, id string) (*models.Environmen
 		&env.Namespace, &env.Endpoint, &env.Timeout,
 		&env.Resources.CPU, &env.Resources.Memory, &env.Resources.Storage,
 		&envVarsJSON, &commandJSON, &labelsJSON, &nodeSelectorJSON, &tolerationsJSON, &isolationJSON, &poolJSON,
+		&env.ReconciliationRetryCount, &lastReconciliationError, &lastReconciliationAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -137,6 +153,12 @@ func (db *DB) GetEnvironment(ctx context.Context, id string) (*models.Environmen
 			db.logger.Warn("failed to unmarshal pool_config", zap.Error(err), zap.String("environment_id", env.ID))
 		}
 	}
+	if lastReconciliationError.Valid {
+		env.LastReconciliationError = lastReconciliationError.String
+	}
+	if lastReconciliationAt.Valid {
+		env.LastReconciliationAt = &lastReconciliationAt.Time
+	}
 
 	return &env, nil
 }
@@ -146,7 +168,8 @@ func (db *DB) ListEnvironments(ctx context.Context, limit, offset int) ([]*model
 	query := `
 		SELECT id, name, status, image, created_at, started_at, user_id, namespace, endpoint,
 			timeout, resources_cpu, resources_memory, resources_storage,
-			env_vars, command, labels, node_selector, tolerations, isolation_config, pool_config
+			env_vars, command, labels, node_selector, tolerations, isolation_config, pool_config,
+			COALESCE(reconciliation_retry_count, 0), last_reconciliation_error, last_reconciliation_at
 		FROM environments
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -163,12 +186,15 @@ func (db *DB) ListEnvironments(ctx context.Context, limit, offset int) ([]*model
 		var env models.Environment
 		var statusStr string
 		var envVarsJSON, commandJSON, labelsJSON, nodeSelectorJSON, tolerationsJSON, isolationJSON, poolJSON sql.NullString
+		var lastReconciliationError sql.NullString
+		var lastReconciliationAt sql.NullTime
 
 		err := rows.Scan(
 			&env.ID, &env.Name, &statusStr, &env.Image, &env.CreatedAt, &env.StartedAt, &env.UserID,
 			&env.Namespace, &env.Endpoint, &env.Timeout,
 			&env.Resources.CPU, &env.Resources.Memory, &env.Resources.Storage,
 			&envVarsJSON, &commandJSON, &labelsJSON, &nodeSelectorJSON, &tolerationsJSON, &isolationJSON, &poolJSON,
+			&env.ReconciliationRetryCount, &lastReconciliationError, &lastReconciliationAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan environment: %w", err)
@@ -212,6 +238,12 @@ func (db *DB) ListEnvironments(ctx context.Context, limit, offset int) ([]*model
 				db.logger.Warn("failed to unmarshal pool_config", zap.Error(err), zap.String("environment_id", env.ID))
 			}
 		}
+		if lastReconciliationError.Valid {
+			env.LastReconciliationError = lastReconciliationError.String
+		}
+		if lastReconciliationAt.Valid {
+			env.LastReconciliationAt = &lastReconciliationAt.Time
+		}
 
 		environments = append(environments, &env)
 	}
@@ -234,6 +266,16 @@ func (db *DB) UpdateEnvironmentStatus(ctx context.Context, id string, status mod
 	_, err := db.ExecContext(ctx, query, string(status), startedAt, id)
 	if err != nil {
 		return fmt.Errorf("failed to update environment status: %w", err)
+	}
+	return nil
+}
+
+// UpdateEnvironmentReconciliationState updates retry count and last error for an environment
+func (db *DB) UpdateEnvironmentReconciliationState(ctx context.Context, id string, retryCount int, lastError string, lastAt *time.Time) error {
+	query := "UPDATE environments SET reconciliation_retry_count = $1, last_reconciliation_error = $2, last_reconciliation_at = $3 WHERE id = $4"
+	_, err := db.ExecContext(ctx, query, retryCount, nullIfEmpty(lastError), lastAt, id)
+	if err != nil {
+		return fmt.Errorf("failed to update environment reconciliation state: %w", err)
 	}
 	return nil
 }

@@ -435,7 +435,27 @@ Retrieves environment details and current status.
 - `terminated` - Environment has been cleaned up
 - `failed` - Environment failed to start
 
-#### 3. List Environments
+Environment responses may include reconciliation fields: `reconciliation_retry_count`, `last_reconciliation_error`, `last_reconciliation_at`, `reconciliation_retries_left` (for pending/failed environments and the "Retry" button).
+
+#### 3. Update Environment (PATCH)
+
+**PATCH** `/environments/{id}`
+
+Updates environment settings after creation. All request body fields are optional; only provided fields are updated. Requires editor or higher permission (super admins, environment admins, environment owners).
+
+**Request Body (all optional):** `name`, `image`, `resources`, `timeout`, `env`, `command`, `labels`, `node_selector`, `tolerations`, `isolation`, `pool`
+
+**Response:** `200 OK` with the updated environment.
+
+#### 4. Retry Reconciliation
+
+**POST** `/environments/{id}/retry`
+
+Resets reconciliation retry count and triggers one provisioning attempt. Use when an environment is stuck in pending/failed after max automatic retries. Requires editor or higher permission.
+
+**Response:** `202 Accepted` with `{ "status": "retry_triggered" }`.
+
+#### 5. List Environments
 
 **GET** `/environments`
 
@@ -464,7 +484,7 @@ Lists all environments with optional filtering.
 }
 ```
 
-#### 4. Execute Command
+#### 6. Execute Command
 
 **POST** `/environments/{id}/exec`
 
@@ -488,7 +508,7 @@ Executes a command in the environment and returns output.
 }
 ```
 
-#### 5. Attach to Environment (WebSocket)
+#### 7. Attach to Environment (WebSocket)
 
 **WebSocket** `/environments/{id}/attach`
 
@@ -531,7 +551,7 @@ Server → Client:
 }
 ```
 
-#### 6. Delete Environment
+#### 8. Delete Environment
 
 **DELETE** `/environments/{id}`
 
@@ -542,11 +562,11 @@ Terminates and removes an environment.
 
 **Response:** `204 No Content`
 
-#### 7. Get Environment Logs
+#### 9. Get Environment Logs
 
 **GET** `/environments/{id}/logs`
 
-Retrieves logs from the environment.
+Retrieves logs from the environment. Includes both pod logs and reconciliation events (reconciliation loop start/success/failure), merged and sorted by time.
 
 **Query Parameters:**
 - `tail` - Number of lines from end (e.g., `?tail=100`)

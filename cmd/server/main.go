@@ -120,7 +120,7 @@ func run() error {
 	defer metricsCollector.Stop()
 
 	// Initialize all handlers
-	handler := api.NewHandler(orch, val, log)
+	handler := api.NewHandler(orch, val, log, permissionService)
 	authHandler := api.NewAuthHandler(authService, userService, log)
 	userHandler := api.NewUserHandler(userService, authService, log)
 	apiKeyHandler := api.NewAPIKeyHandler(authService, permissionService, log)

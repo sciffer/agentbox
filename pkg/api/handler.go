@@ -18,23 +18,51 @@ import (
 	"github.com/sciffer/agentbox/pkg/auth"
 	"github.com/sciffer/agentbox/pkg/models"
 	"github.com/sciffer/agentbox/pkg/orchestrator"
+	"github.com/sciffer/agentbox/pkg/permissions"
+	"github.com/sciffer/agentbox/pkg/users"
 	"github.com/sciffer/agentbox/pkg/validator"
 )
 
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
-	orchestrator *orchestrator.Orchestrator
-	validator    *validator.Validator
-	logger       *logger.Logger
+	orchestrator      *orchestrator.Orchestrator
+	validator         *validator.Validator
+	logger            *logger.Logger
+	permissionService *permissions.Service
 }
 
 // NewHandler creates a new API handler
-func NewHandler(orch *orchestrator.Orchestrator, val *validator.Validator, log *logger.Logger) *Handler {
+func NewHandler(orch *orchestrator.Orchestrator, val *validator.Validator, log *logger.Logger, permissionService *permissions.Service) *Handler {
 	return &Handler{
-		orchestrator: orch,
-		validator:    val,
-		logger:       log,
+		orchestrator:      orch,
+		validator:         val,
+		logger:            log,
+		permissionService: permissionService,
 	}
+}
+
+// requireEnvEdit checks that the current user can edit the environment (super admin, env admin/editor, or owner).
+// When permissionService is nil (e.g. unit tests without auth), the check is skipped and the request is allowed.
+func (h *Handler) requireEnvEdit(w http.ResponseWriter, r *http.Request, envID string) (*users.User, bool) {
+	if h.permissionService == nil {
+		return nil, true
+	}
+	ctx := r.Context()
+	user, ok := auth.GetUserFromContext(ctx)
+	if !ok || user == nil {
+		h.respondError(w, http.StatusUnauthorized, "not authenticated", nil)
+		return nil, false
+	}
+	allowed, err := h.permissionService.CheckAccess(ctx, user, envID, permissions.PermissionEditor)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "failed to check permissions", err)
+		return nil, false
+	}
+	if !allowed {
+		h.respondError(w, http.StatusForbidden, "insufficient permissions to edit this environment", nil)
+		return nil, false
+	}
+	return user, true
 }
 
 // CreateEnvironment handles POST /environments
@@ -318,6 +346,59 @@ func (h *Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
+}
+
+// UpdateEnvironment handles PATCH /environments/{id} (super admins, environment admins, and owners can edit)
+func (h *Handler) UpdateEnvironment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	envID := vars["id"]
+
+	if _, ok := h.requireEnvEdit(w, r, envID); !ok {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+	var patch models.UpdateEnvironmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	defer r.Body.Close()
+
+	env, err := h.orchestrator.UpdateEnvironment(ctx, envID, &patch)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "environment not found", err)
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "failed to update environment", err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, env)
+}
+
+// RetryReconciliation handles POST /environments/{id}/retry (resets retries and triggers one reconcile)
+func (h *Handler) RetryReconciliation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	envID := vars["id"]
+
+	if _, ok := h.requireEnvEdit(w, r, envID); !ok {
+		return
+	}
+
+	if err := h.orchestrator.RetryReconciliation(ctx, envID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.respondError(w, http.StatusNotFound, "environment not found", err)
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "failed to retry reconciliation", err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusAccepted, map[string]string{"status": "retry_triggered"})
 }
 
 // DeleteEnvironment handles DELETE /environments/{id}

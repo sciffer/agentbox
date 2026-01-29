@@ -10,12 +10,21 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Kubernetes KubernetesConfig `yaml:"kubernetes"`
-	Auth       AuthConfig       `yaml:"auth"`
-	Resources  ResourceConfig   `yaml:"resources"`
-	Timeouts   TimeoutConfig    `yaml:"timeouts"`
-	Pool       PoolConfig       `yaml:"pool"`
+	Server         ServerConfig         `yaml:"server"`
+	Kubernetes     KubernetesConfig     `yaml:"kubernetes"`
+	Auth           AuthConfig           `yaml:"auth"`
+	Resources      ResourceConfig       `yaml:"resources"`
+	Timeouts       TimeoutConfig        `yaml:"timeouts"`
+	Pool           PoolConfig           `yaml:"pool"`
+	Reconciliation ReconciliationConfig `yaml:"reconciliation"`
+}
+
+// ReconciliationConfig holds reconciliation loop settings
+type ReconciliationConfig struct {
+	// IntervalSeconds is how often the reconciliation loop runs (default: 60)
+	IntervalSeconds int `yaml:"interval_seconds"`
+	// MaxRetries is the maximum number of reconciliation attempts for a failed/pending environment before marking as failed (default: 5)
+	MaxRetries int `yaml:"max_retries"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -123,6 +132,10 @@ func setDefaults(cfg *Config) {
 	cfg.Pool.DefaultImage = "python:3.11-slim"
 	cfg.Pool.DefaultCPU = "500m"
 	cfg.Pool.DefaultMemory = "512Mi"
+
+	// Reconciliation defaults
+	cfg.Reconciliation.IntervalSeconds = 60
+	cfg.Reconciliation.MaxRetries = 5
 }
 
 // overrideFromEnv overrides config with environment variables
@@ -133,6 +146,7 @@ func overrideFromEnv(cfg *Config) {
 	overrideResourcesFromEnv(&cfg.Resources)
 	overrideTimeoutsFromEnv(&cfg.Timeouts)
 	overridePoolFromEnv(&cfg.Pool)
+	overrideReconciliationFromEnv(&cfg.Reconciliation)
 }
 
 // overrideServerFromEnv overrides server config from environment variables
@@ -231,6 +245,20 @@ func overridePoolFromEnv(cfg *PoolConfig) {
 	}
 }
 
+// overrideReconciliationFromEnv overrides reconciliation config from environment variables
+func overrideReconciliationFromEnv(cfg *ReconciliationConfig) {
+	if v := os.Getenv("AGENTBOX_RECONCILIATION_INTERVAL_SECONDS"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil && val > 0 {
+			cfg.IntervalSeconds = val
+		}
+	}
+	if v := os.Getenv("AGENTBOX_RECONCILIATION_MAX_RETRIES"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil && val >= 0 {
+			cfg.MaxRetries = val
+		}
+	}
+}
+
 // validate checks if the configuration is valid
 func validate(cfg *Config) error {
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
@@ -247,6 +275,13 @@ func validate(cfg *Config) error {
 
 	if cfg.Timeouts.MaxTimeout < cfg.Timeouts.DefaultTimeout {
 		return fmt.Errorf("max timeout cannot be less than default timeout")
+	}
+
+	if cfg.Reconciliation.IntervalSeconds < 10 {
+		return fmt.Errorf("reconciliation interval_seconds must be at least 10, got %d", cfg.Reconciliation.IntervalSeconds)
+	}
+	if cfg.Reconciliation.MaxRetries < 0 {
+		return fmt.Errorf("reconciliation max_retries must be >= 0, got %d", cfg.Reconciliation.MaxRetries)
 	}
 
 	return nil
