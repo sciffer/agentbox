@@ -371,40 +371,61 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 	return nil
 }
 
-// GetEnvironment retrieves an environment by ID
+// GetEnvironment retrieves an environment by ID.
+// DB is source of truth: if not in DB, we purge from memory and return not found (so deleted envs never reappear).
 func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*models.Environment, error) {
-	// Try database first (for persistence across restarts)
 	if o.db != nil {
-		if env, err := o.db.GetEnvironment(ctx, envID); err == nil {
-			// Also update in-memory cache
+		env, err := o.db.GetEnvironment(ctx, envID)
+		if err != nil {
+			// Not in DB (e.g. deleted): purge from memory so all replicas converge, then return not found
 			o.envMutex.Lock()
-			o.environments[envID] = env
+			delete(o.environments, envID)
 			o.envMutex.Unlock()
-
-			// Refresh status from Kubernetes if running
-			envCopy := *env
-			if envCopy.Status == models.StatusRunning {
-				pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
-				if err == nil {
-					newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
-					// Only update if we got a valid status (don't change to pending for unknown phases)
-					if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
-						envCopy.Status = newStatus
-						o.envMutex.Lock()
-						if e, ok := o.environments[envID]; ok {
-							e.Status = newStatus
-						}
-						o.envMutex.Unlock()
-					}
-				}
-				// If pod doesn't exist, keep the stored status (don't change to pending)
-			}
-
-			return &envCopy, nil
+			return nil, fmt.Errorf("environment not found")
 		}
+		// Also update in-memory cache
+		o.envMutex.Lock()
+		o.environments[envID] = env
+		o.envMutex.Unlock()
+
+		// Refresh status from Kubernetes so exec works as soon as the pod is actually running
+		envCopy := *env
+		if envCopy.Status == models.StatusRunning {
+			pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
+			if err == nil {
+				newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
+				// Only update if we got a valid status (don't change to pending for unknown phases)
+				if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
+					envCopy.Status = newStatus
+					o.envMutex.Lock()
+					if e, ok := o.environments[envID]; ok {
+						e.Status = newStatus
+					}
+					o.envMutex.Unlock()
+				}
+			}
+			// If pod doesn't exist, keep the stored status (don't change to pending)
+		} else if envCopy.Status == models.StatusPending || envCopy.Status == models.StatusFailed {
+			// Stored as pending/failed: check if pod is actually running so exec can succeed without waiting for reconciliation
+			pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
+			if err == nil && pod.Status.Phase == podPhaseRunning {
+				envCopy.Status = models.StatusRunning
+				o.updateEnvironmentStatus(envID, models.StatusRunning)
+			}
+		}
+
+		maxRetries := o.config.Reconciliation.MaxRetries
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
+		envCopy.ReconciliationRetriesLeft = maxRetries - envCopy.ReconciliationRetryCount
+		if envCopy.ReconciliationRetriesLeft < 0 {
+			envCopy.ReconciliationRetriesLeft = 0
+		}
+		return &envCopy, nil
 	}
 
-	// Fallback to in-memory
+	// No DB: fallback to in-memory only (e.g. tests)
 	o.envMutex.RLock()
 	env, exists := o.environments[envID]
 	o.envMutex.RUnlock()
@@ -413,8 +434,7 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 		return nil, fmt.Errorf("environment not found")
 	}
 
-	// Refresh status from Kubernetes if running
-	// Create a copy to avoid race conditions
+	// Refresh status from Kubernetes so exec works as soon as the pod is actually running
 	envCopy := *env
 	if envCopy.Status == models.StatusRunning {
 		pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
@@ -432,6 +452,17 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 			}
 		}
 		// If pod doesn't exist, keep the stored status (don't change to pending)
+	} else if envCopy.Status == models.StatusPending || envCopy.Status == models.StatusFailed {
+		// No DB path: check if pod is actually running so exec can succeed
+		pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
+		if err == nil && pod.Status.Phase == podPhaseRunning {
+			envCopy.Status = models.StatusRunning
+			o.envMutex.Lock()
+			if e, ok := o.environments[envID]; ok {
+				e.Status = models.StatusRunning
+			}
+			o.envMutex.Unlock()
+		}
 	}
 
 	// Computed field for UI: retries left (for "Retry" button visibility)
@@ -447,7 +478,8 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 	return &envCopy, nil
 }
 
-// ListEnvironments lists all environments with optional filtering
+// ListEnvironments lists all environments from the database (source of truth) with optional filtering.
+// In-memory status is overlaid so live status (running/pending/failed) is shown.
 func (o *Orchestrator) ListEnvironments(
 	ctx context.Context, status *models.EnvironmentStatus, labelSelector string, limit, offset int,
 ) (*models.ListEnvironmentsResponse, error) {
@@ -462,32 +494,45 @@ func (o *Orchestrator) ListEnvironments(
 		offset = 0
 	}
 
-	o.envMutex.RLock()
-	// Pre-allocate with estimated capacity
-	envs := make([]models.Environment, 0, len(o.environments))
+	// List from database so deleted envs never appear (consistent across replicas)
+	var base []*models.Environment
+	if o.db != nil {
+		fromDB, err := o.db.ListEnvironments(ctx, 1000, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list environments from database: %w", err)
+		}
+		base = fromDB
+	} else {
+		// No DB: fallback to in-memory only (e.g. tests)
+		o.envMutex.RLock()
+		for _, env := range o.environments {
+			envCopy := *env
+			base = append(base, &envCopy)
+		}
+		o.envMutex.RUnlock()
+	}
 
-	for _, env := range o.environments {
-		// Filter by status if specified
+	// Overlay in-memory status so we have live status, then filter by status/label
+	o.envMutex.RLock()
+	filtered := make([]*models.Environment, 0, len(base))
+	for _, env := range base {
+		if inMem, ok := o.environments[env.ID]; ok {
+			env = inMem
+		}
 		if status != nil && env.Status != *status {
 			continue
 		}
-
-		// Filter by label if specified
 		if labelSelector != "" && !matchesLabelSelector(env.Labels, labelSelector) {
 			continue
 		}
-
-		// Create a copy to avoid race conditions
 		envCopy := *env
-		envs = append(envs, envCopy)
+		filtered = append(filtered, &envCopy)
 	}
 	o.envMutex.RUnlock()
 
-	// Apply pagination
-	total := len(envs)
+	total := len(filtered)
 	start := offset
 	end := offset + limit
-
 	if start > total {
 		start = total
 	}
@@ -495,7 +540,6 @@ func (o *Orchestrator) ListEnvironments(
 		end = total
 	}
 
-	// Avoid allocation if no results
 	if start >= end {
 		return &models.ListEnvironmentsResponse{
 			Environments: []models.Environment{},
@@ -505,21 +549,24 @@ func (o *Orchestrator) ListEnvironments(
 		}, nil
 	}
 
-	pagedEnvs := envs[start:end]
+	page := filtered[start:end]
+	result := make([]models.Environment, 0, len(page))
 	maxRetries := o.config.Reconciliation.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
-	for i := range pagedEnvs {
-		left := maxRetries - pagedEnvs[i].ReconciliationRetryCount
+	for _, env := range page {
+		envCopy := *env
+		left := maxRetries - envCopy.ReconciliationRetryCount
 		if left < 0 {
 			left = 0
 		}
-		pagedEnvs[i].ReconciliationRetriesLeft = left
+		envCopy.ReconciliationRetriesLeft = left
+		result = append(result, envCopy)
 	}
 
 	return &models.ListEnvironmentsResponse{
-		Environments: pagedEnvs,
+		Environments: result,
 		Total:        total,
 		Limit:        limit,
 		Offset:       offset,
@@ -581,7 +628,8 @@ func (o *Orchestrator) UpdateEnvironment(ctx context.Context, envID string, patc
 	return &envCopy, nil
 }
 
-// DeleteEnvironment terminates and removes an environment
+// DeleteEnvironment terminates and removes an environment.
+// Deletes from DB first so all replicas stop listing it; then K8s; then memory.
 func (o *Orchestrator) DeleteEnvironment(ctx context.Context, envID string, force bool) error {
 	o.envMutex.Lock()
 	env, exists := o.environments[envID]
@@ -589,39 +637,43 @@ func (o *Orchestrator) DeleteEnvironment(ctx context.Context, envID string, forc
 		o.envMutex.Unlock()
 		return fmt.Errorf("environment not found")
 	}
-	env.Status = models.StatusTerminating
+	namespace := env.Namespace
 	o.envMutex.Unlock()
 
+	// Delete from database first so ListEnvironments (DB-backed) stops returning this env on all replicas
+	if o.db != nil {
+		if err := o.db.DeleteEnvironment(ctx, envID); err != nil {
+			return fmt.Errorf("failed to delete environment from database: %w", err)
+		}
+	}
+
 	// Delete pod (best effort - namespace deletion will cascade)
-	if err := o.k8sClient.DeletePod(ctx, env.Namespace, "main", force); err != nil {
+	if err := o.k8sClient.DeletePod(ctx, namespace, "main", force); err != nil {
 		o.logger.Warn("failed to delete pod (will be cleaned up with namespace)",
 			zap.String("environment_id", envID),
-			zap.String("namespace", env.Namespace),
+			zap.String("namespace", namespace),
 			zap.Error(err),
 		)
 	}
 
 	// Delete namespace (cascades to all resources)
-	if err := o.k8sClient.DeleteNamespace(ctx, env.Namespace); err != nil {
-		return fmt.Errorf("failed to delete namespace: %w", err)
+	if err := o.k8sClient.DeleteNamespace(ctx, namespace); err != nil {
+		o.logger.Warn("failed to delete namespace (env already removed from DB)",
+			zap.String("environment_id", envID),
+			zap.String("namespace", namespace),
+			zap.Error(err),
+		)
+		// Do not return error: DB is already updated, UI should not show the env
 	}
 
-	// Remove from memory and database
+	// Remove from memory last so this replica stops serving it
 	o.envMutex.Lock()
 	delete(o.environments, envID)
 	o.envMutex.Unlock()
 
-	// Delete from database
-	if o.db != nil {
-		if err := o.db.DeleteEnvironment(ctx, envID); err != nil {
-			o.logger.Error("failed to delete environment from database", zap.Error(err), zap.String("environment_id", envID))
-			// Continue even if database delete fails
-		}
-	}
-
 	o.logger.Info("environment deleted",
 		zap.String("environment_id", envID),
-		zap.String("namespace", env.Namespace),
+		zap.String("namespace", namespace),
 	)
 
 	return nil
@@ -1727,14 +1779,34 @@ func (o *Orchestrator) runReconciliationLoop() {
 	}
 }
 
-// reconcileAll iterates over environments and reconciles those that need it
+// reconcileAll iterates over environments and reconciles those that need it.
+// Only reconciles envs that still exist in the DB (so deleted envs are skipped on all replicas).
 func (o *Orchestrator) reconcileAll() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	// When DB is present, only reconcile envs that exist in DB (avoids reconciling deleted envs on other replicas)
+	var inDB map[string]struct{}
+	if o.db != nil {
+		list, err := o.db.ListEnvironments(ctx, 10000, 0)
+		if err != nil {
+			o.logger.Warn("reconciliation: failed to list environments from DB", zap.Error(err))
+			return
+		}
+		inDB = make(map[string]struct{}, len(list))
+		for _, e := range list {
+			inDB[e.ID] = struct{}{}
+		}
+	}
+
 	o.envMutex.RLock()
 	envList := make([]*models.Environment, 0, len(o.environments))
 	for _, env := range o.environments {
+		if inDB != nil {
+			if _, ok := inDB[env.ID]; !ok {
+				continue // Deleted from DB, skip reconciliation
+			}
+		}
 		if env.Status == models.StatusTerminating || env.Status == models.StatusTerminated {
 			continue
 		}

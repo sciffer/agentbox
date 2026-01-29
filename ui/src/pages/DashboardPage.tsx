@@ -96,11 +96,15 @@ export default function DashboardPage() {
   
   const runningEnvs = envList.filter((e) => e.status === 'running')
 
+  // When a specific environment is selected, show stats for that env only; otherwise show all
+  const listForStats = selectedEnvId !== 'all' && selectedEnvId
+    ? envList.filter((e) => e.id === selectedEnvId)
+    : envList
   const stats = {
-    total: Array.isArray(envData) ? envData.length : (envData?.total || envList.length),
-    running: runningEnvs.length,
-    pending: envList.filter((e) => e.status === 'pending').length,
-    failed: envList.filter((e) => e.status === 'failed').length,
+    total: listForStats.length,
+    running: listForStats.filter((e) => e.status === 'running').length,
+    pending: listForStats.filter((e) => e.status === 'pending').length,
+    failed: listForStats.filter((e) => e.status === 'failed').length,
   }
 
   // Format metrics for charts

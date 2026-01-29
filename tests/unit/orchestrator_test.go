@@ -143,13 +143,11 @@ func TestListEnvironments(t *testing.T) {
 	assert.Equal(t, expectedTotal, resp.Total)
 	assert.LessOrEqual(t, len(resp.Environments), 2)
 
-	// Filter by status (some may have transitioned to Running due to async provisioning)
-	status := models.StatusPending
-	resp, err = orch.ListEnvironments(ctx, &status, "", 100, 0)
+	// Filter by status (overlay in-memory status then filter, so only envs currently with that status are returned)
+	statusPending := models.StatusPending
+	resp, err = orch.ListEnvironments(ctx, &statusPending, "", 100, 0)
 	require.NoError(t, err)
-	// Due to async provisioning, environments may quickly transition from pending to running.
-	// On fast CI systems, all environments may have already transitioned by this point.
-	// We just verify the status filter works (returns environments with matching status or empty if none match)
+	// Due to async provisioning, envs may have transitioned to running; filter returns only currently pending
 	for _, env := range resp.Environments {
 		assert.Equal(t, models.StatusPending, env.Status, "Filtered environments should have pending status")
 	}
