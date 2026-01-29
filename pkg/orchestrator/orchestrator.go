@@ -371,79 +371,16 @@ func (o *Orchestrator) provisionEnvironment(ctx context.Context, env *models.Env
 	return nil
 }
 
-// GetEnvironment retrieves an environment by ID.
-// DB is source of truth: if not in DB, we purge from memory and return not found (so deleted envs never reappear).
-func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*models.Environment, error) {
-	if o.db != nil {
-		env, err := o.db.GetEnvironment(ctx, envID)
-		if err != nil {
-			// Not in DB (e.g. deleted): purge from memory so all replicas converge, then return not found
-			o.envMutex.Lock()
-			delete(o.environments, envID)
-			o.envMutex.Unlock()
-			return nil, fmt.Errorf("environment not found")
-		}
-		// Also update in-memory cache
-		o.envMutex.Lock()
-		o.environments[envID] = env
-		o.envMutex.Unlock()
-
-		// Refresh status from Kubernetes so exec works as soon as the pod is actually running
-		envCopy := *env
-		if envCopy.Status == models.StatusRunning {
-			pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
-			if err == nil {
-				newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
-				// Only update if we got a valid status (don't change to pending for unknown phases)
-				if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
-					envCopy.Status = newStatus
-					o.envMutex.Lock()
-					if e, ok := o.environments[envID]; ok {
-						e.Status = newStatus
-					}
-					o.envMutex.Unlock()
-				}
-			}
-			// If pod doesn't exist, keep the stored status (don't change to pending)
-		} else if envCopy.Status == models.StatusPending || envCopy.Status == models.StatusFailed {
-			// Stored as pending/failed: check if pod is actually running so exec can succeed without waiting for reconciliation
-			pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
-			if err == nil && pod.Status.Phase == podPhaseRunning {
-				envCopy.Status = models.StatusRunning
-				o.updateEnvironmentStatus(envID, models.StatusRunning)
-			}
-		}
-
-		maxRetries := o.config.Reconciliation.MaxRetries
-		if maxRetries < 0 {
-			maxRetries = 0
-		}
-		envCopy.ReconciliationRetriesLeft = maxRetries - envCopy.ReconciliationRetryCount
-		if envCopy.ReconciliationRetriesLeft < 0 {
-			envCopy.ReconciliationRetriesLeft = 0
-		}
-		return &envCopy, nil
-	}
-
-	// No DB: fallback to in-memory only (e.g. tests)
-	o.envMutex.RLock()
-	env, exists := o.environments[envID]
-	o.envMutex.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("environment not found")
-	}
-
-	// Refresh status from Kubernetes so exec works as soon as the pod is actually running
+// refreshEnvironmentStatusFromK8s updates env status from the main pod when appropriate;
+// returns a copy of env with possibly updated status and updates in-memory (and DB if updateDB).
+func (o *Orchestrator) refreshEnvironmentStatusFromK8s(ctx context.Context, envID string, env *models.Environment, updateDB bool) models.Environment {
 	envCopy := *env
-	if envCopy.Status == models.StatusRunning {
-		pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
+	if env.Status == models.StatusRunning {
+		pod, err := o.k8sClient.GetPod(ctx, env.Namespace, "main")
 		if err == nil {
 			newStatus := convertPodPhaseToStatus(string(pod.Status.Phase))
-			// Only update if we got a valid status (don't change to pending for unknown phases)
 			if newStatus != models.StatusPending || pod.Status.Phase == podPhasePending {
 				envCopy.Status = newStatus
-				// Keep cache in sync so subsequent GetEnvironment/ExecuteCommand see consistent status
 				o.envMutex.Lock()
 				if e, ok := o.environments[envID]; ok {
 					e.Status = newStatus
@@ -451,30 +388,65 @@ func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*model
 				o.envMutex.Unlock()
 			}
 		}
-		// If pod doesn't exist, keep the stored status (don't change to pending)
-	} else if envCopy.Status == models.StatusPending || envCopy.Status == models.StatusFailed {
-		// No DB path: check if pod is actually running so exec can succeed
-		pod, err := o.k8sClient.GetPod(ctx, envCopy.Namespace, "main")
+	} else if env.Status == models.StatusPending || env.Status == models.StatusFailed {
+		pod, err := o.k8sClient.GetPod(ctx, env.Namespace, "main")
 		if err == nil && pod.Status.Phase == podPhaseRunning {
 			envCopy.Status = models.StatusRunning
-			o.envMutex.Lock()
-			if e, ok := o.environments[envID]; ok {
-				e.Status = models.StatusRunning
+			if updateDB {
+				o.updateEnvironmentStatus(envID, models.StatusRunning)
+			} else {
+				o.envMutex.Lock()
+				if e, ok := o.environments[envID]; ok {
+					e.Status = models.StatusRunning
+				}
+				o.envMutex.Unlock()
 			}
-			o.envMutex.Unlock()
 		}
 	}
+	return envCopy
+}
 
-	// Computed field for UI: retries left (for "Retry" button visibility)
-	maxRetries := o.config.Reconciliation.MaxRetries
+// getEnvironmentReconciliationRetriesLeft returns maxRetries - count, clamped to >= 0.
+func getEnvironmentReconciliationRetriesLeft(maxRetries int, count int) int {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
-	envCopy.ReconciliationRetriesLeft = maxRetries - envCopy.ReconciliationRetryCount
-	if envCopy.ReconciliationRetriesLeft < 0 {
-		envCopy.ReconciliationRetriesLeft = 0
+	left := maxRetries - count
+	if left < 0 {
+		return 0
+	}
+	return left
+}
+
+// GetEnvironment retrieves an environment by ID.
+// DB is source of truth: if not in DB, we purge from memory and return not found (so deleted envs never reappear).
+func (o *Orchestrator) GetEnvironment(ctx context.Context, envID string) (*models.Environment, error) {
+	if o.db != nil {
+		env, err := o.db.GetEnvironment(ctx, envID)
+		if err != nil {
+			o.envMutex.Lock()
+			delete(o.environments, envID)
+			o.envMutex.Unlock()
+			return nil, fmt.Errorf("environment not found")
+		}
+		o.envMutex.Lock()
+		o.environments[envID] = env
+		o.envMutex.Unlock()
+
+		envCopy := o.refreshEnvironmentStatusFromK8s(ctx, envID, env, true)
+		envCopy.ReconciliationRetriesLeft = getEnvironmentReconciliationRetriesLeft(o.config.Reconciliation.MaxRetries, envCopy.ReconciliationRetryCount)
+		return &envCopy, nil
 	}
 
+	o.envMutex.RLock()
+	env, exists := o.environments[envID]
+	o.envMutex.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("environment not found")
+	}
+
+	envCopy := o.refreshEnvironmentStatusFromK8s(ctx, envID, env, false)
+	envCopy.ReconciliationRetriesLeft = getEnvironmentReconciliationRetriesLeft(o.config.Reconciliation.MaxRetries, envCopy.ReconciliationRetryCount)
 	return &envCopy, nil
 }
 
