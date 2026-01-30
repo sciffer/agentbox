@@ -50,6 +50,9 @@ type Orchestrator struct {
 	// standbyPool holds pre-warmed pods per environment; key is environment ID
 	standbyPool      map[string][]*StandbyPod
 	standbyPoolMutex sync.Mutex
+	// replenishEnvMutex guards replenishEnvLocks
+	replenishEnvMutex sync.Mutex
+	replenishEnvLocks map[string]*sync.Mutex // per-env lock to prevent over-replenishment from concurrent replenishPool calls
 	// poolStopChan signals the pool replenishment goroutine to stop
 	poolStopChan chan struct{}
 	// reconciliationStopChan signals the reconciliation loop to stop
@@ -83,6 +86,7 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, 
 		execSem:                make(chan struct{}, MaxConcurrentExecutions),
 		executions:             make(map[string]*models.Execution),
 		standbyPool:            make(map[string][]*StandbyPod),
+		replenishEnvLocks:      make(map[string]*sync.Mutex),
 		poolStopChan:           make(chan struct{}),
 		reconciliationStopChan: make(chan struct{}),
 	}
@@ -1648,6 +1652,8 @@ func (o *Orchestrator) replenishPool() {
 	o.envMutex.RUnlock()
 
 	for _, env := range envsToReplenish {
+		envLock := o.replenishLockForEnv(env.ID)
+		envLock.Lock()
 		poolSize := env.Pool.Size
 		if poolSize <= 0 {
 			poolSize = 2
@@ -1658,6 +1664,7 @@ func (o *Orchestrator) replenishPool() {
 		o.standbyPoolMutex.Unlock()
 
 		if needed <= 0 {
+			envLock.Unlock()
 			continue
 		}
 
@@ -1676,7 +1683,18 @@ func (o *Orchestrator) replenishPool() {
 				)
 			}
 		}
+		envLock.Unlock()
 	}
+}
+
+// replenishLockForEnv returns the per-env mutex for replenishment (so we don't over-create from concurrent replenishPool calls).
+func (o *Orchestrator) replenishLockForEnv(envID string) *sync.Mutex {
+	o.replenishEnvMutex.Lock()
+	defer o.replenishEnvMutex.Unlock()
+	if o.replenishEnvLocks[envID] == nil {
+		o.replenishEnvLocks[envID] = &sync.Mutex{}
+	}
+	return o.replenishEnvLocks[envID]
 }
 
 // createStandbyPod creates one standby pod in the environment's namespace with a unique name
