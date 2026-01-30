@@ -111,10 +111,11 @@ function parseCidrs(input: string | undefined): string[] | undefined {
 }
 
 function StatusChip({ status }: { status: string }) {
-  const colors: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
+  const colors: Record<string, 'success' | 'warning' | 'error' | 'default' | 'info'> = {
     running: 'success',
     pending: 'warning',
     failed: 'error',
+    terminating: 'info',
     terminated: 'default',
   }
   return <Chip label={status} color={colors[status] || 'default'} size="small" />
