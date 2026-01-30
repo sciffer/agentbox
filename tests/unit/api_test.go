@@ -436,7 +436,7 @@ func TestDeleteEnvironmentAPI(t *testing.T) {
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusInternalServerError, rr.Code)
+		assert.Equal(t, http.StatusNotFound, rr.Code)
 	})
 
 	t.Run("force delete", func(t *testing.T) {

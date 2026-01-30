@@ -95,10 +95,9 @@ func New(k8sClient k8s.ClientInterface, cfg *config.Config, log *logger.Logger, 
 		}
 	}
 
-	// Start pool replenishment if enabled
-	if cfg.Pool.Enabled && cfg.Pool.Size > 0 {
-		go o.runPoolReplenishment()
-	}
+	// Start pool replenishment loop so per-environment standby pools work (env.Pool.Enabled);
+	// when no env has pool enabled, replenishPool() is a no-op.
+	go o.runPoolReplenishment()
 
 	// Start reconciliation loop (handles pending/failed envs and missing pods)
 	go o.runReconciliationLoop()

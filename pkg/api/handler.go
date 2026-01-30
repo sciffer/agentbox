@@ -410,6 +410,10 @@ func (h *Handler) DeleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 
 	if err := h.orchestrator.DeleteEnvironment(ctx, envID, force); err != nil {
+		if strings.Contains(err.Error(), "environment not found") {
+			h.respondError(w, http.StatusNotFound, "environment not found", err)
+			return
+		}
 		h.respondError(w, http.StatusInternalServerError, "failed to delete environment", err)
 		return
 	}
