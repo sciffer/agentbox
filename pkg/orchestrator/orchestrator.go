@@ -1120,7 +1120,12 @@ func (o *Orchestrator) runExecutionWithNewPod(
 		o.updateExecutionError(execID, "execution record not found")
 		return
 	}
-	// If canceled after we set Running, don't create pod or overwrite with Completed
+	if namespace == "" {
+		namespace = env.Namespace
+	}
+	if podName == "" {
+		podName = execID
+	}
 	o.execMutex.RLock()
 	current := o.executions[execID]
 	canceled := current != nil && current.Status == models.ExecutionStatusCanceled
@@ -1128,6 +1133,7 @@ func (o *Orchestrator) runExecutionWithNewPod(
 	if canceled {
 		return
 	}
+
 	o.logger.Info("starting execution (new pod)",
 		zap.String("exec_id", execID),
 		zap.String("pod", podName),
@@ -1135,6 +1141,34 @@ func (o *Orchestrator) runExecutionWithNewPod(
 		zap.String("image", env.Image),
 	)
 
+	podSpec := o.buildEphemeralPodSpec(env, req, execID, namespace, podName, execRecord)
+	fallbackToMain, createErr := o.tryCreateEphemeralPodOrFallback(ctx, execID, namespace, podSpec, req, env)
+	if fallbackToMain {
+		return
+	}
+	if createErr != nil {
+		o.updateExecutionError(execID, fmt.Sprintf("failed to create pod: %v", createErr))
+		return
+	}
+
+	defer o.cleanupEphemeralPod(execID, namespace, podName)
+
+	startTime := time.Now()
+	result, err := o.k8sClient.WaitForPodCompletion(ctx, namespace, podName)
+	duration := time.Since(startTime)
+	if err != nil {
+		o.updateExecutionError(execID, fmt.Sprintf("execution failed: %v", err))
+		return
+	}
+
+	o.recordEphemeralExecutionCompletion(ctx, execID, podName, result, duration)
+}
+
+// buildEphemeralPodSpec builds a PodSpec for an ephemeral execution pod.
+func (o *Orchestrator) buildEphemeralPodSpec(
+	env *models.Environment, req *EphemeralExecRequest, execID, namespace, podName string,
+	execRecord *models.Execution,
+) *k8s.PodSpec {
 	labels := map[string]string{
 		"app":            "agentbox",
 		"exec-id":        execID,
@@ -1146,7 +1180,6 @@ func (o *Orchestrator) runExecutionWithNewPod(
 	for k, v := range env.Labels {
 		labels[k] = v
 	}
-
 	mergedEnv := make(map[string]string)
 	for k, v := range env.Env {
 		mergedEnv[k] = v
@@ -1154,12 +1187,10 @@ func (o *Orchestrator) runExecutionWithNewPod(
 	for k, v := range req.Env {
 		mergedEnv[k] = v
 	}
-
 	runtimeClass := o.config.Kubernetes.RuntimeClass
 	if env.Isolation != nil && env.Isolation.RuntimeClass != "" {
 		runtimeClass = env.Isolation.RuntimeClass
 	}
-
 	var securityContext *k8s.SecurityContext
 	if env.Isolation != nil && env.Isolation.SecurityContext != nil {
 		securityContext = &k8s.SecurityContext{
@@ -1170,7 +1201,6 @@ func (o *Orchestrator) runExecutionWithNewPod(
 			AllowPrivilegeEscalation: env.Isolation.SecurityContext.AllowPrivilegeEscalation,
 		}
 	}
-
 	var k8sTolerations []k8s.Toleration
 	for _, t := range env.Tolerations {
 		k8sTolerations = append(k8sTolerations, k8s.Toleration{
@@ -1181,8 +1211,7 @@ func (o *Orchestrator) runExecutionWithNewPod(
 			TolerationSeconds: t.TolerationSeconds,
 		})
 	}
-
-	podSpec := &k8s.PodSpec{
+	return &k8s.PodSpec{
 		Name:            podName,
 		Namespace:       namespace,
 		Image:           env.Image,
@@ -1197,78 +1226,79 @@ func (o *Orchestrator) runExecutionWithNewPod(
 		Tolerations:     k8sTolerations,
 		SecurityContext: securityContext,
 	}
+}
 
-	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "exceeded quota") || strings.Contains(errStr, "forbidden") {
-			o.logger.Info("ephemeral pod creation failed (quota); running in main pod",
-				zap.String("exec_id", execID),
-				zap.String("namespace", namespace),
-			)
-			o.runExecutionInMainPod(ctx, execID, namespace, req.Command, env)
-			return
-		}
-		o.updateExecutionError(execID, fmt.Sprintf("failed to create pod: %v", err))
-		return
+// tryCreateEphemeralPodOrFallback creates the pod; on quota/forbidden error runs in main pod.
+// Returns (true, nil) when fallback to main pod was used, (false, err) on create error, (false, nil) on success.
+func (o *Orchestrator) tryCreateEphemeralPodOrFallback(
+	ctx context.Context, execID, namespace string, podSpec *k8s.PodSpec, req *EphemeralExecRequest, env *models.Environment,
+) (fallbackToMain bool, err error) {
+	err = o.k8sClient.CreatePod(ctx, podSpec)
+	if err == nil {
+		return false, nil
 	}
-
-	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cleanupCancel()
-		if err := o.k8sClient.DeletePod(cleanupCtx, namespace, podName, true); err != nil {
-			o.logger.Warn("failed to cleanup ephemeral pod",
-				zap.String("exec_id", execID),
-				zap.String("pod", podName),
-				zap.Error(err),
-			)
-		} else {
-			o.logger.Debug("cleaned up ephemeral pod",
-				zap.String("exec_id", execID),
-				zap.String("pod", podName),
-			)
-		}
-	}()
-
-	startTime := time.Now()
-	result, err := o.k8sClient.WaitForPodCompletion(ctx, namespace, podName)
-	duration := time.Since(startTime)
-
-	if err != nil {
-		o.updateExecutionError(execID, fmt.Sprintf("execution failed: %v", err))
-		return
+	errStr := err.Error()
+	if strings.Contains(errStr, "exceeded quota") || strings.Contains(errStr, "forbidden") {
+		o.logger.Warn("ephemeral pod creation failed (quota); running in main pod — execution is not in a clean sandbox",
+			zap.String("exec_id", execID),
+			zap.String("namespace", namespace),
+		)
+		o.runExecutionInMainPod(ctx, execID, namespace, req.Command, env)
+		return true, nil
 	}
+	return false, err
+}
 
+// cleanupEphemeralPod deletes the ephemeral pod after execution (best-effort).
+func (o *Orchestrator) cleanupEphemeralPod(execID, namespace, podName string) {
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cleanupCancel()
+	if err := o.k8sClient.DeletePod(cleanupCtx, namespace, podName, true); err != nil {
+		o.logger.Warn("failed to cleanup ephemeral pod",
+			zap.String("exec_id", execID),
+			zap.String("pod", podName),
+			zap.Error(err),
+		)
+	} else {
+		o.logger.Debug("cleaned up ephemeral pod",
+			zap.String("exec_id", execID),
+			zap.String("pod", podName),
+		)
+	}
+}
+
+// recordEphemeralExecutionCompletion updates execution record, persists to DB, and logs completion.
+func (o *Orchestrator) recordEphemeralExecutionCompletion(
+	ctx context.Context, execID, podName string, result *k8s.PodCompletionResult, duration time.Duration,
+) {
 	completedAt := time.Now()
 	durationMs := duration.Milliseconds()
 	o.execMutex.Lock()
 	var exec *models.Execution
 	var exists bool
-	if exec, exists = o.executions[execID]; exists {
-		// Don't overwrite Canceled with Completed (user canceled while pod was running)
-		if exec.Status != models.ExecutionStatusCanceled {
-			exec.Status = models.ExecutionStatusCompleted
-			exec.CompletedAt = &completedAt
-			exec.ExitCode = &result.ExitCode
-			exec.Stdout = result.Logs
-			exec.DurationMs = &durationMs
-		}
+	if exec, exists = o.executions[execID]; exists && exec.Status != models.ExecutionStatusCanceled {
+		exec.Status = models.ExecutionStatusCompleted
+		exec.CompletedAt = &completedAt
+		exec.ExitCode = &result.ExitCode
+		exec.Stdout = result.Logs
+		exec.DurationMs = &durationMs
 	}
 	o.execMutex.Unlock()
 
-	if exists && o.db != nil {
+	if !exists {
+		return
+	}
+	if o.db != nil {
 		if err := o.db.SaveExecution(ctx, exec); err != nil {
 			o.logger.Error("failed to save execution results to database", zap.Error(err), zap.String("execution_id", execID))
 		}
 	}
-
-	if exists && exec != nil && exec.Status == models.ExecutionStatusCompleted {
-		o.logger.Info("execution completed",
-			zap.String("exec_id", execID),
-			zap.String("pod", podName),
-			zap.Int("exit_code", result.ExitCode),
-			zap.Int64("duration_ms", durationMs),
-		)
-	}
+	o.logger.Info("execution completed",
+		zap.String("exec_id", execID),
+		zap.String("pod", podName),
+		zap.Int("exit_code", result.ExitCode),
+		zap.Int64("duration_ms", durationMs),
+	)
 }
 
 // runWithStandbyPod executes a command in a pre-warmed standby pod (single-use; pod is deleted after)
@@ -1824,7 +1854,9 @@ func (o *Orchestrator) runReconciliationLoop() {
 			o.logger.Info("reconciliation loop stopped")
 			return
 		case <-ticker.C:
+			o.logger.Info("reconciliation cycle starting")
 			o.reconcileAll()
+			o.logger.Info("reconciliation cycle completed")
 		}
 	}
 }
@@ -1865,6 +1897,11 @@ func (o *Orchestrator) reconcileAll() {
 	}
 	o.envMutex.RUnlock()
 
+	o.logger.Debug("reconciliation: envs in scope",
+		zap.Int("count", len(envList)),
+		zap.Int("total_in_memory", len(o.environments)),
+	)
+
 	maxRetries := o.config.Reconciliation.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -1885,6 +1922,10 @@ func (o *Orchestrator) reconcileAll() {
 			o.reconcileRunning(ctx, env)
 		}
 	}
+
+	// Replenish standby pools so Running envs with pool enabled get standby pods
+	// even if the pool ticker hasn't run yet or replenishment previously failed
+	o.replenishPool()
 }
 
 // reconcilePendingOrFailed retries provisioning for a pending or failed environment
