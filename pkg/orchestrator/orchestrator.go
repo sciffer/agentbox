@@ -1064,16 +1064,24 @@ func (o *Orchestrator) runExecution(execID string, env *models.Environment, req 
 
 	standbyPod := o.claimStandbyPod(env.ID)
 
-	now := time.Now()
+	// If canceled while queued, don't overwrite with Running
 	o.execMutex.Lock()
-	if exec, exists := o.executions[execID]; exists {
-		exec.Status = models.ExecutionStatusRunning
-		exec.StartedAt = &now
-		exec.QueuedAt = &now
-		if standbyPod != nil {
-			exec.PodName = standbyPod.Name
-			exec.Namespace = standbyPod.Namespace
-		}
+	exec, exists := o.executions[execID]
+	if !exists {
+		o.execMutex.Unlock()
+		return
+	}
+	if exec.Status == models.ExecutionStatusCanceled {
+		o.execMutex.Unlock()
+		return
+	}
+	now := time.Now()
+	exec.Status = models.ExecutionStatusRunning
+	exec.StartedAt = &now
+	exec.QueuedAt = &now
+	if standbyPod != nil {
+		exec.PodName = standbyPod.Name
+		exec.Namespace = standbyPod.Namespace
 	}
 	o.execMutex.Unlock()
 
@@ -1110,6 +1118,14 @@ func (o *Orchestrator) runExecutionWithNewPod(
 ) {
 	if execRecord == nil {
 		o.updateExecutionError(execID, "execution record not found")
+		return
+	}
+	// If canceled after we set Running, don't create pod or overwrite with Completed
+	o.execMutex.RLock()
+	current := o.executions[execID]
+	canceled := current != nil && current.Status == models.ExecutionStatusCanceled
+	o.execMutex.RUnlock()
+	if canceled {
 		return
 	}
 	o.logger.Info("starting execution (new pod)",
@@ -1228,11 +1244,14 @@ func (o *Orchestrator) runExecutionWithNewPod(
 	var exec *models.Execution
 	var exists bool
 	if exec, exists = o.executions[execID]; exists {
-		exec.Status = models.ExecutionStatusCompleted
-		exec.CompletedAt = &completedAt
-		exec.ExitCode = &result.ExitCode
-		exec.Stdout = result.Logs
-		exec.DurationMs = &durationMs
+		// Don't overwrite Canceled with Completed (user canceled while pod was running)
+		if exec.Status != models.ExecutionStatusCanceled {
+			exec.Status = models.ExecutionStatusCompleted
+			exec.CompletedAt = &completedAt
+			exec.ExitCode = &result.ExitCode
+			exec.Stdout = result.Logs
+			exec.DurationMs = &durationMs
+		}
 	}
 	o.execMutex.Unlock()
 
@@ -1242,12 +1261,14 @@ func (o *Orchestrator) runExecutionWithNewPod(
 		}
 	}
 
-	o.logger.Info("execution completed",
-		zap.String("exec_id", execID),
-		zap.String("pod", podName),
-		zap.Int("exit_code", result.ExitCode),
-		zap.Int64("duration_ms", durationMs),
-	)
+	if exists && exec != nil && exec.Status == models.ExecutionStatusCompleted {
+		o.logger.Info("execution completed",
+			zap.String("exec_id", execID),
+			zap.String("pod", podName),
+			zap.Int("exit_code", result.ExitCode),
+			zap.Int64("duration_ms", durationMs),
+		)
+	}
 }
 
 // runWithStandbyPod executes a command in a pre-warmed standby pod (single-use; pod is deleted after)
