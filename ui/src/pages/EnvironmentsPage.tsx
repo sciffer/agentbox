@@ -273,6 +273,13 @@ export default function EnvironmentsPage() {
 
   const envList = data?.environments as Environment[] | undefined
 
+  const deleteErrorMessage = (() => {
+    const err = deleteMutation.error as { response?: { data?: { message?: string; error?: string } }; message?: string } | undefined
+    if (!err) return 'Failed to delete environment'
+    const msg = err.response?.data?.message ?? err.response?.data?.error ?? err.message
+    return msg ?? 'Failed to delete environment'
+  })()
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -285,6 +292,12 @@ export default function EnvironmentsPage() {
           Create Environment
         </Button>
       </Box>
+
+      {deleteMutation.isError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => deleteMutation.reset()}>
+          {deleteErrorMessage}
+        </Alert>
+      )}
 
       <TableContainer component={Paper}>
         <Table>
