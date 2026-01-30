@@ -1120,6 +1120,13 @@ func (o *Orchestrator) runExecutionWithNewPod(
 		o.updateExecutionError(execID, "execution record not found")
 		return
 	}
+	// Ensure we have valid namespace and unique pod name (defensive for no-standby path)
+	if namespace == "" {
+		namespace = env.Namespace
+	}
+	if podName == "" {
+		podName = execID
+	}
 	// If canceled after we set Running, don't create pod or overwrite with Completed
 	o.execMutex.RLock()
 	current := o.executions[execID]
@@ -1201,7 +1208,7 @@ func (o *Orchestrator) runExecutionWithNewPod(
 	if err := o.k8sClient.CreatePod(ctx, podSpec); err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "exceeded quota") || strings.Contains(errStr, "forbidden") {
-			o.logger.Info("ephemeral pod creation failed (quota); running in main pod",
+			o.logger.Warn("ephemeral pod creation failed (quota); running in main pod — execution is not in a clean sandbox",
 				zap.String("exec_id", execID),
 				zap.String("namespace", namespace),
 			)
@@ -1824,7 +1831,9 @@ func (o *Orchestrator) runReconciliationLoop() {
 			o.logger.Info("reconciliation loop stopped")
 			return
 		case <-ticker.C:
+			o.logger.Info("reconciliation cycle starting")
 			o.reconcileAll()
+			o.logger.Info("reconciliation cycle completed")
 		}
 	}
 }
@@ -1865,6 +1874,11 @@ func (o *Orchestrator) reconcileAll() {
 	}
 	o.envMutex.RUnlock()
 
+	o.logger.Debug("reconciliation: envs in scope",
+		zap.Int("count", len(envList)),
+		zap.Int("total_in_memory", len(o.environments)),
+	)
+
 	maxRetries := o.config.Reconciliation.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -1885,6 +1899,10 @@ func (o *Orchestrator) reconcileAll() {
 			o.reconcileRunning(ctx, env)
 		}
 	}
+
+	// Replenish standby pools so Running envs with pool enabled get standby pods
+	// even if the pool ticker hasn't run yet or replenishment previously failed
+	o.replenishPool()
 }
 
 // reconcilePendingOrFailed retries provisioning for a pending or failed environment
